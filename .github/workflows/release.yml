@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 jobs:
   release:
     name: Prepare release
@@ -21,13 +24,12 @@ jobs:
         run: |
           cd custom_components
           zip -r ../ovms-hass.zip ovms-hass -x "ovms-hass/__pycache__/*"
+          cd ..
+          ls -lh ovms-hass.zip
 
       - name: Upload release asset
-        uses: actions/upload-release-asset@v1
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ovms-hass.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./ovms-hass.zip
-          asset_name: ovms-hass.zip
-          asset_content_type: application/zip
