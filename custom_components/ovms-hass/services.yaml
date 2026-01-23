@@ -1,0 +1,231 @@
+# OVMS Services
+
+send_command:
+  name: Send Command
+  description: Send a generic OVMS command to the vehicle.
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: The OVMS vehicle ID to send the command to.
+      required: true
+      example: "DEMO"
+      selector:
+        text:
+    command:
+      name: Command
+      description: The command string to send (e.g., "stat" for status, "location" for GPS).
+      required: true
+      example: "stat"
+      selector:
+        text:
+
+send_sms:
+  name: Send SMS
+  description: Send an SMS message via the vehicle's modem.
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: The OVMS vehicle ID to send the SMS from.
+      required: true
+      example: "DEMO"
+      selector:
+        text:
+    phone_number:
+      name: Phone Number
+      description: The phone number to send the SMS to.
+      required: true
+      example: "+1234567890"
+      selector:
+        text:
+    message:
+      name: Message
+      description: The SMS message text.
+      required: true
+      example: "Hello from OVMS"
+      selector:
+        text:
+
+set_charge_timer:
+  name: Set Charge Timer
+  description: Set or disable the vehicle's charge timer.
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: The OVMS vehicle ID to configure.
+      required: true
+      example: "DEMO"
+      selector:
+        text:
+    start_time:
+      name: Start Time
+      description: The time to start charging (format HH:MM).
+      required: true
+      example: "23:00"
+      selector:
+        time:
+    enabled:
+      name: Enabled
+      description: Whether to enable or disable the charge timer.
+      required: false
+      default: true
+      selector:
+        boolean:
+
+wakeup_subsystem:
+  name: Wakeup Subsystem
+  description: Wake up a specific vehicle subsystem.
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: The OVMS vehicle ID.
+      required: true
+      example: "DEMO"
+      selector:
+        text:
+    subsystem:
+      name: Subsystem
+      description: The subsystem number to wake up.
+      required: true
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+
+tpms_map_wheel:
+  name: TPMS Map Wheel
+  description: Map a TPMS sensor to a specific wheel position.
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: The OVMS vehicle ID.
+      required: true
+      example: "DEMO"
+      selector:
+        text:
+    wheel:
+      name: Wheel Position
+      description: The wheel position to map.
+      required: true
+      example: "fl"
+      selector:
+        select:
+          options:
+            - label: "Front Left"
+              value: "fl"
+            - label: "Front Right"
+              value: "fr"
+            - label: "Rear Left"
+              value: "rl"
+            - label: "Rear Right"
+              value: "rr"
+    sensor_id:
+      name: Sensor ID
+      description: The TPMS sensor ID to map to this wheel.
+      required: true
+      example: "12345678"
+      selector:
+        text:
+
+get_feature:
+  name: Get Feature
+  description: Get the value of an OVMS module feature.
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: The OVMS vehicle ID.
+      required: true
+      example: "DEMO"
+      selector:
+        text:
+    feature_number:
+      name: Feature Number
+      description: The feature number (0-15).
+      required: true
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 15
+          mode: box
+
+set_feature:
+  name: Set Feature
+  description: Set the value of an OVMS module feature.
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: The OVMS vehicle ID.
+      required: true
+      example: "DEMO"
+      selector:
+        text:
+    feature_number:
+      name: Feature Number
+      description: The feature number (0-15).
+      required: true
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 15
+          mode: box
+    value:
+      name: Value
+      description: The value to set.
+      required: true
+      example: "1"
+      selector:
+        text:
+
+get_parameter:
+  name: Get Parameter
+  description: Get the value of an OVMS module parameter.
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: The OVMS vehicle ID.
+      required: true
+      example: "DEMO"
+      selector:
+        text:
+    parameter_number:
+      name: Parameter Number
+      description: The parameter number (0-31).
+      required: true
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 31
+          mode: box
+
+set_parameter:
+  name: Set Parameter
+  description: Set the value of an OVMS module parameter.
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: The OVMS vehicle ID.
+      required: true
+      example: "DEMO"
+      selector:
+        text:
+    parameter_number:
+      name: Parameter Number
+      description: The parameter number (0-31).
+      required: true
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 31
+          mode: box
+    value:
+      name: Value
+      description: The value to set.
+      required: true
+      example: "value"
+      selector:
+        text:

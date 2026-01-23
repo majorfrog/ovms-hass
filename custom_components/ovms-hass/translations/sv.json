@@ -1,0 +1,293 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "OVMS-anslutning",
+        "description": "Ange dina OVMS-serveruppgifter för att ansluta till ditt fordon.",
+        "data": {
+          "host": "Servervärd",
+          "port": "Serverport",
+          "username": "Användarnamn",
+          "password": "Lösenord",
+          "vehicle_id": "Fordons-ID (valfritt)"
+        },
+        "data_description": {
+          "host": "OVMS-serverns värdnamn (standard: api.openvehicles.com)",
+          "port": "HTTPS-port (standard: 6869)",
+          "username": "Ditt OVMS-kontoanvändarnamn",
+          "password": "Ditt OVMS-kontolösenord",
+          "vehicle_id": "Fordons-ID att övervaka (lämna tomt för automatisk identifiering)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunde inte ansluta till OVMS-servern. Kontrollera värd- och portinställningarna.",
+      "invalid_auth": "Ogiltigt användarnamn eller lösenord. Kontrollera dina uppgifter.",
+      "missing_credentials": "Ange alla obligatoriska uppgifter.",
+      "unknown": "Ett oväntat fel inträffade. Kontrollera loggarna för mer information."
+    },
+    "abort": {
+      "already_configured": "Detta OVMS-fordon är redan konfigurerat."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OVMS-inställningar",
+        "description": "Konfigurera uppdateringsinställningar för din OVMS-integration.",
+        "data": {
+          "scan_interval": "Uppdateringsintervall (sekunder)"
+        },
+        "data_description": {
+          "scan_interval": "Hur ofta data ska hämtas från OVMS-servern (60-3600 sekunder)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "soc": {
+        "name": "Laddningsnivå"
+      },
+      "soh": {
+        "name": "Batterihälsa"
+      },
+      "range": {
+        "name": "Beräcknad räckvidd"
+      },
+      "odometer": {
+        "name": "Vägmätare"
+      },
+      "speed": {
+        "name": "Hastighet"
+      },
+      "temp_ambient": {
+        "name": "Omgivningstemperatur"
+      },
+      "temp_cabin": {
+        "name": "Kupétemperatur"
+      },
+      "temp_battery": {
+        "name": "Batteritemperatur"
+      },
+      "temp_pem": {
+        "name": "PEM-temperatur"
+      },
+      "temp_motor": {
+        "name": "Motortemperatur"
+      },
+      "temp_charger": {
+        "name": "Laddartemperatur"
+      },
+      "charge_state": {
+        "name": "Laddningsstatus"
+      },
+      "charge_power": {
+        "name": "Laddningseffekt"
+      },
+      "charge_current": {
+        "name": "Laddningsström"
+      },
+      "charge_etr_full": {
+        "name": "Tid till fulladdat"
+      },
+      "charge_type": {
+        "name": "Laddningstyp"
+      },
+      "charge_limit_range": {
+        "name": "Laddningsgräns räckvidd"
+      },
+      "charge_kwh": {
+        "name": "Laddad energi"
+      },
+      "charge_kwh_grid": {
+        "name": "Använd nätenergi"
+      },
+      "charge_kwh_grid_total": {
+        "name": "Total använd nätenergi"
+      },
+      "charger_efficiency": {
+        "name": "Laddareffektivitet"
+      },
+      "charger_power_input": {
+        "name": "Laddarens ineffekt"
+      },
+      "vehicle12v": {
+        "name": "12V-batteri"
+      },
+      "vehicle12v_current": {
+        "name": "12V-batteriström"
+      },
+      "battvoltage": {
+        "name": "Batterispänning"
+      },
+      "battery_capacity": {
+        "name": "Batterikapacitet"
+      },
+      "cac": {
+        "name": "Beräknad kapacitet (CAC)"
+      },
+      "latitude": {
+        "name": "Latitud"
+      },
+      "longitude": {
+        "name": "Longitud"
+      },
+      "altitude": {
+        "name": "Höjd"
+      },
+      "direction": {
+        "name": "Riktning"
+      },
+      "energyused": {
+        "name": "Använd energi"
+      },
+      "energyrecd": {
+        "name": "Återvunnen energi"
+      },
+      "drive_mode": {
+        "name": "Körläge"
+      },
+      "power": {
+        "name": "Effekt"
+      },
+      "inverter_power": {
+        "name": "Växelriktareffekt"
+      },
+      "inverter_efficiency": {
+        "name": "Växelriktareffektivitet"
+      },
+      "trip_meter": {
+        "name": "Trippmätare"
+      },
+      "last_seen": {
+        "name": "Senast sedd"
+      },
+      "gsm_signal": {
+        "name": "GSM-signal"
+      },
+      "wifi_signal": {
+        "name": "WiFi-signal"
+      },
+      "modem_mode": {
+        "name": "Modemläge"
+      },
+      "firmware_version": {
+        "name": "Firmware-version"
+      },
+      "hardware_version": {
+        "name": "Hårdvaruversion"
+      },
+      "service_range": {
+        "name": "Service räckvidd"
+      },
+      "service_time": {
+        "name": "Service tid"
+      },
+      "connection_status": {
+        "name": "Anslutningsstatus"
+      }
+    },
+    "binary_sensor": {
+      "door_fl": {
+        "name": "Vänster framdörr"
+      },
+      "door_fr": {
+        "name": "Höger framdörr"
+      },
+      "door_rl": {
+        "name": "Vänster bakdörr"
+      },
+      "door_rr": {
+        "name": "Höger bakdörr"
+      },
+      "bonnet": {
+        "name": "Motorhuv"
+      },
+      "trunk": {
+        "name": "Baklucka"
+      },
+      "charge_port": {
+        "name": "Laddport"
+      },
+      "handbrake": {
+        "name": "Parkeringsbroms"
+      },
+      "pilot_present": {
+        "name": "Pilot ansluten"
+      },
+      "car_on": {
+        "name": "Bil på"
+      },
+      "headlights": {
+        "name": "Strålkastare"
+      },
+      "alarm": {
+        "name": "Larm"
+      },
+      "gps_lock": {
+        "name": "GPS-lås"
+      },
+      "can_write": {
+        "name": "CAN-skrivning aktiv"
+      }
+    },
+    "climate": {
+      "climate": {
+        "name": "Klimatkontroll"
+      }
+    },
+    "lock": {
+      "lock": {
+        "name": "Dörrlås"
+      }
+    },
+    "switch": {
+      "cooldown": {
+        "name": "Nedkylning"
+      },
+      "valet_mode": {
+        "name": "Valetläge"
+      }
+    },
+    "number": {
+      "charge_limit": {
+        "name": "Laddningsgräns"
+      },
+      "charge_current": {
+        "name": "Laddningsström"
+      },
+      "gps_streaming_interval": {
+        "name": "GPS-strömningsintervall"
+      }
+    },
+    "button": {
+      "refresh": {
+        "name": "Uppdatera data"
+      },
+      "wakeup": {
+        "name": "Väck fordon"
+      },
+      "homelink_1": {
+        "name": "HomeLink 1"
+      },
+      "homelink_2": {
+        "name": "HomeLink 2"
+      },
+      "homelink_3": {
+        "name": "HomeLink 3"
+      },
+      "module_reset": {
+        "name": "Modulåterställning"
+      },
+      "tpms_reset": {
+        "name": "Återställ TPMS-larm"
+      }
+    },
+    "device_tracker": {
+      "tracker": {
+        "name": "Plats"
+      }
+    }
+  }
+}

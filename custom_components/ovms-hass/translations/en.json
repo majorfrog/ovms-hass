@@ -1,0 +1,293 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "OVMS Connection",
+        "description": "Enter your OVMS server credentials to connect to your vehicle.",
+        "data": {
+          "host": "Server Host",
+          "port": "Server Port",
+          "username": "Username",
+          "password": "Password",
+          "vehicle_id": "Vehicle ID (optional)"
+        },
+        "data_description": {
+          "host": "OVMS server hostname (default: api.openvehicles.com)",
+          "port": "HTTPS port (default: 6869)",
+          "username": "Your OVMS account username",
+          "password": "Your OVMS account password",
+          "vehicle_id": "Vehicle ID to monitor (leave empty to auto-detect)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to OVMS server. Please check your host and port settings.",
+      "invalid_auth": "Invalid username or password. Please check your credentials.",
+      "missing_credentials": "Please provide all required credentials.",
+      "unknown": "Unexpected error occurred. Please check logs for more details."
+    },
+    "abort": {
+      "already_configured": "This OVMS vehicle is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OVMS Options",
+        "description": "Configure update settings for your OVMS integration.",
+        "data": {
+          "scan_interval": "Update interval (seconds)"
+        },
+        "data_description": {
+          "scan_interval": "How often to fetch data from OVMS server (60-3600 seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "soc": {
+        "name": "State of Charge"
+      },
+      "soh": {
+        "name": "State of Health"
+      },
+      "range": {
+        "name": "Estimated Range"
+      },
+      "odometer": {
+        "name": "Odometer"
+      },
+      "speed": {
+        "name": "Speed"
+      },
+      "temp_ambient": {
+        "name": "Ambient Temperature"
+      },
+      "temp_cabin": {
+        "name": "Cabin Temperature"
+      },
+      "temp_battery": {
+        "name": "Battery Temperature"
+      },
+      "temp_pem": {
+        "name": "PEM Temperature"
+      },
+      "temp_motor": {
+        "name": "Motor Temperature"
+      },
+      "temp_charger": {
+        "name": "Charger Temperature"
+      },
+      "charge_state": {
+        "name": "Charging State"
+      },
+      "charge_power": {
+        "name": "Charging Power"
+      },
+      "charge_current": {
+        "name": "Charging Current"
+      },
+      "charge_etr_full": {
+        "name": "Time to Full"
+      },
+      "charge_type": {
+        "name": "Charge Type"
+      },
+      "charge_limit_range": {
+        "name": "Charge Limit Range"
+      },
+      "charge_kwh": {
+        "name": "Charge Energy"
+      },
+      "charge_kwh_grid": {
+        "name": "Grid Energy Used"
+      },
+      "charge_kwh_grid_total": {
+        "name": "Total Grid Energy Used"
+      },
+      "charger_efficiency": {
+        "name": "Charger Efficiency"
+      },
+      "charger_power_input": {
+        "name": "Charger Power Input"
+      },
+      "vehicle12v": {
+        "name": "12V Battery"
+      },
+      "vehicle12v_current": {
+        "name": "12V Battery Current"
+      },
+      "battvoltage": {
+        "name": "Battery Voltage"
+      },
+      "battery_capacity": {
+        "name": "Battery Capacity"
+      },
+      "cac": {
+        "name": "Calculated Capacity (CAC)"
+      },
+      "latitude": {
+        "name": "Latitude"
+      },
+      "longitude": {
+        "name": "Longitude"
+      },
+      "altitude": {
+        "name": "Altitude"
+      },
+      "direction": {
+        "name": "Direction"
+      },
+      "energyused": {
+        "name": "Energy Used"
+      },
+      "energyrecd": {
+        "name": "Energy Recovered"
+      },
+      "drive_mode": {
+        "name": "Drive Mode"
+      },
+      "power": {
+        "name": "Power"
+      },
+      "inverter_power": {
+        "name": "Inverter Power"
+      },
+      "inverter_efficiency": {
+        "name": "Inverter Efficiency"
+      },
+      "trip_meter": {
+        "name": "Trip Meter"
+      },
+      "last_seen": {
+        "name": "Last Seen"
+      },
+      "gsm_signal": {
+        "name": "GSM Signal"
+      },
+      "wifi_signal": {
+        "name": "WiFi Signal"
+      },
+      "modem_mode": {
+        "name": "Modem Mode"
+      },
+      "firmware_version": {
+        "name": "Firmware Version"
+      },
+      "hardware_version": {
+        "name": "Hardware Version"
+      },
+      "service_range": {
+        "name": "Service Range"
+      },
+      "service_time": {
+        "name": "Service Time"
+      },
+      "connection_status": {
+        "name": "Connection Status"
+      }
+    },
+    "binary_sensor": {
+      "door_fl": {
+        "name": "Front Left Door"
+      },
+      "door_fr": {
+        "name": "Front Right Door"
+      },
+      "door_rl": {
+        "name": "Rear Left Door"
+      },
+      "door_rr": {
+        "name": "Rear Right Door"
+      },
+      "bonnet": {
+        "name": "Bonnet/Hood"
+      },
+      "trunk": {
+        "name": "Trunk"
+      },
+      "charge_port": {
+        "name": "Charge Port"
+      },
+      "handbrake": {
+        "name": "Parking Brake"
+      },
+      "pilot_present": {
+        "name": "Pilot Present"
+      },
+      "car_on": {
+        "name": "Car On"
+      },
+      "headlights": {
+        "name": "Headlights"
+      },
+      "alarm": {
+        "name": "Alarm"
+      },
+      "gps_lock": {
+        "name": "GPS Lock"
+      },
+      "can_write": {
+        "name": "CAN Write Active"
+      }
+    },
+    "climate": {
+      "climate": {
+        "name": "Climate Control"
+      }
+    },
+    "lock": {
+      "lock": {
+        "name": "Door Lock"
+      }
+    },
+    "switch": {
+      "cooldown": {
+        "name": "Cooldown"
+      },
+      "valet_mode": {
+        "name": "Valet Mode"
+      }
+    },
+    "number": {
+      "charge_limit": {
+        "name": "Charge Limit"
+      },
+      "charge_current": {
+        "name": "Charge Current"
+      },
+      "gps_streaming_interval": {
+        "name": "GPS Streaming Interval"
+      }
+    },
+    "button": {
+      "refresh": {
+        "name": "Refresh Data"
+      },
+      "wakeup": {
+        "name": "Wake Up"
+      },
+      "homelink_1": {
+        "name": "HomeLink 1"
+      },
+      "homelink_2": {
+        "name": "HomeLink 2"
+      },
+      "homelink_3": {
+        "name": "HomeLink 3"
+      },
+      "module_reset": {
+        "name": "Module Reset"
+      },
+      "tpms_reset": {
+        "name": "Reset TPMS Alerts"
+      }
+    },
+    "device_tracker": {
+      "tracker": {
+        "name": "Location"
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "domain": "ovms_hass",
+  "name": "OVMS (Open Vehicles Monitoring System)",
+  "codeowners": ["@majorfrog"],
+  "config_flow": true,
+  "documentation": "https://github.com/majorfrog/ovms-hass",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/majorfrog/ovms-hass/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}
