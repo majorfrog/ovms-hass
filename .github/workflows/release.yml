@@ -22,10 +22,9 @@ jobs:
 
       - name: Create release ZIP
         run: |
-          cd custom_components
-          cp -r ovms-hass ovms_hass
-          zip -r ../ovms-hass.zip ovms_hass -x "ovms_hass/__pycache__/*"
-          cd ..
+          cd custom_components/ovms-hass
+          zip -r ../../ovms-hass.zip . -x "__pycache__/*"
+          cd ../..
           ls -lh ovms-hass.zip
 
       - name: Upload release asset
