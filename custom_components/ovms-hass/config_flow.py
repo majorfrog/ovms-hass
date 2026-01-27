@@ -28,6 +28,7 @@ DEFAULT_HOST = "api.openvehicles.com"
 DEFAULT_PORT = 6869
 DEFAULT_SCAN_INTERVAL = 300
 CONF_VEHICLE_ID = "vehicle_id"
+CONF_VEHICLE_PASSWORD = "vehicle_password"
 
 
 class OVMSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -144,6 +145,7 @@ class OVMSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_USERNAME): cv.string,
                     vol.Required(CONF_PASSWORD): cv.string,
                     vol.Optional(CONF_VEHICLE_ID): cv.string,
+                    vol.Optional(CONF_VEHICLE_PASSWORD): cv.string,
                 }
             ),
             errors=errors,

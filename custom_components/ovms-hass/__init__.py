@@ -10,6 +10,7 @@ Configuration via configuration.yaml:
       port: 6869
       username: your_username
       password: your_password
+      vehicle_password: your_vehicle_module_password
       vehicles:
         - vehicle_id: DEMO
           name: My Vehicle
@@ -52,6 +53,7 @@ DOMAIN: Final = "ovms_hass"
 DEFAULT_HOST: Final = "api.openvehicles.com"
 DEFAULT_PORT: Final = 6869
 DEFAULT_SCAN_INTERVAL: Final = 300
+CONF_VEHICLE_PASSWORD: Final = "vehicle_password"
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -72,6 +74,7 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Required(CONF_PORT, default=DEFAULT_PORT): cv.port,
                 vol.Required(CONF_USERNAME): cv.string,
                 vol.Required(CONF_PASSWORD): cv.string,
+                vol.Optional(CONF_VEHICLE_PASSWORD): cv.string,
                 vol.Optional("vehicles", default=[]): [
                     {
                         vol.Required("vehicle_id"): cv.string,
@@ -121,6 +124,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             CONF_PORT: ovms_config.get(CONF_PORT, DEFAULT_PORT),
             CONF_USERNAME: ovms_config[CONF_USERNAME],
             CONF_PASSWORD: ovms_config[CONF_PASSWORD],
+            CONF_VEHICLE_PASSWORD: ovms_config.get(CONF_VEHICLE_PASSWORD),
             "vehicle_id": vehicle.get("vehicle_id"),
             "name": vehicle.get("name", vehicle.get("vehicle_id")),
             "scan_interval": vehicle.get("scan_interval", DEFAULT_SCAN_INTERVAL),
@@ -198,21 +202,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         }
 
         # Set up Protocol v2 client for commands
+        # Use vehicle_password for Protocol v2 if available, otherwise fall back to password
+        # The vehicle_password is the password configured in the OVMS module itself
+        # which is different from the server account password
+        vehicle_password = entry.data.get(CONF_VEHICLE_PASSWORD) or entry.data[CONF_PASSWORD]
+        
         protocol_client = OVMSProtocolClient(
             host=entry.data.get(CONF_HOST, DEFAULT_HOST),
             username=entry.data[CONF_USERNAME],
-            password=entry.data[CONF_PASSWORD],
+            password=vehicle_password,  # Use vehicle module password for Protocol v2
+            vehicle_id=vehicle_id,
             port=6870,  # TLS port
             use_tls=True,
         )
 
         try:
+            _LOGGER.debug("Connecting Protocol v2 client for vehicle %s", vehicle_id)
             await protocol_client.connect()
             coordinator.ovms_client = protocol_client
+            _LOGGER.info(
+                "Protocol v2 client connected successfully for vehicle %s", vehicle_id
+            )
         except (OVMSConnectionError, OVMSAPIError) as err:
             _LOGGER.warning(
                 "Failed to connect Protocol v2 client for commands: %s", err
             )
+        except Exception as err:
+            _LOGGER.exception("Unexpected error connecting Protocol v2 client: %s", err)
 
         # Initial data fetch (don't fail if it errors - vehicle may not have data yet)
         try:

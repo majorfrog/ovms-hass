@@ -134,6 +134,7 @@ class ClimateControlEntity(OVMSEntity, ClimateEntity):
     _attr_supported_features = ClimateEntityFeature(0)
     _attr_target_temperature_step = 1
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _enable_turn_on_off_backwards_compatibility = False
 
     def __init__(
         self,
@@ -152,7 +153,8 @@ class ClimateControlEntity(OVMSEntity, ClimateEntity):
             icon="mdi:air-conditioner",
         )
         super().__init__(coordinator, config, vehicle_id)
-        self._hvac_mode = HVACMode.OFF
+        # Use optimistic state tracking since OVMS doesn't provide AC status feedback
+        self._attr_hvac_mode = HVACMode.OFF
 
     @property
     def current_temperature(self) -> float | None:
@@ -170,30 +172,56 @@ class ClimateControlEntity(OVMSEntity, ClimateEntity):
         """Return target temperature (not directly available)."""
         return self.current_temperature
 
-    @property
-    def hvac_mode(self) -> HVACMode:
-        """Return current HVAC mode."""
-        is_on = self.coordinator.data.get("status", {}).get("hvac_on", False)
-        return HVACMode.COOL if is_on else HVACMode.OFF
-
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new HVAC mode.
 
         Args:
             hvac_mode: New HVAC mode
         """
+        _LOGGER.debug("Climate entity: Setting HVAC mode to %s", hvac_mode)
+
         if not self.coordinator.ovms_client:
             _LOGGER.error("OVMS Protocol client not available, cannot control HVAC")
             return
 
+        if not self.coordinator.ovms_client.connected:
+            _LOGGER.error("OVMS Protocol client not connected, cannot control HVAC")
+            return
+
         try:
+            command_sent = False
             if hvac_mode == HVACMode.COOL:
-                await self.coordinator.ovms_client.send_command("26,1")
+                _LOGGER.debug("Sending AC ON command (26,1)")
+                result = await self.coordinator.async_send_command("26,1")
+                if result:
+                    self._attr_hvac_mode = HVACMode.COOL
+                    command_sent = True
+                    _LOGGER.info("AC turned ON successfully")
+                else:
+                    _LOGGER.error("Failed to turn AC ON - command returned False")
             elif hvac_mode == HVACMode.OFF:
-                await self.coordinator.ovms_client.send_command("26,0")
-            await self.coordinator.async_request_refresh()
+                _LOGGER.debug("Sending AC OFF command (26,0)")
+                result = await self.coordinator.async_send_command("26,0")
+                if result:
+                    self._attr_hvac_mode = HVACMode.OFF
+                    command_sent = True
+                    _LOGGER.info("AC turned OFF successfully")
+                else:
+                    _LOGGER.error("Failed to turn AC OFF - command returned False")
+
+            if command_sent:
+                # Write the state immediately for responsive UI
+                self.async_write_ha_state()
+                _LOGGER.debug(
+                    "Climate entity state updated to %s", self._attr_hvac_mode
+                )
+
         except (ValueError, KeyError, RuntimeError) as err:
             _LOGGER.error("Failed to set HVAC mode to %s: %s", hvac_mode, err)
+        except Exception as err:
+            _LOGGER.exception(
+                "Unexpected error setting HVAC mode to %s: %s", hvac_mode, err
+            )
 
 
 class AmbientTemperatureSensor(OVMSEntity, SensorEntity):

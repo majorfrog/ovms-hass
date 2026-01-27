@@ -8,15 +8,17 @@
           "host": "Server Host",
           "port": "Server Port",
           "username": "Username",
-          "password": "Password",
-          "vehicle_id": "Vehicle ID (optional)"
+          "password": "Server Password",
+          "vehicle_id": "Vehicle ID (optional)",
+          "vehicle_password": "Vehicle Module Password (optional)"
         },
         "data_description": {
           "host": "OVMS server hostname (default: api.openvehicles.com)",
           "port": "HTTPS port (default: 6869)",
           "username": "Your OVMS account username",
-          "password": "Your OVMS account password",
-          "vehicle_id": "Vehicle ID to monitor (leave empty to auto-detect)"
+          "password": "Your OVMS server account password (for REST API)",
+          "vehicle_id": "Vehicle ID to monitor (leave empty to auto-detect)",
+          "vehicle_password": "The password configured in your OVMS module (for vehicle commands). If not set, server password will be used."
         }
       }
     },
