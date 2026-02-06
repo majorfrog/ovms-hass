@@ -66,7 +66,7 @@ Before submitting a pull request:
    ```yaml
    logger:
      logs:
-       custom_components.ovms-hass: debug
+       custom_components.ovms_hass: debug
    ```
 3. Restart Home Assistant to load changes
 

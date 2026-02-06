@@ -129,10 +129,10 @@ Nine advanced services for vehicle control:
 ### Manual Installation
 
 1. Download the latest release from [GitHub Releases](https://github.com/majorfrog/ovms-hass/releases)
-2. Extract the `ovms-hass` folder to your `custom_components` directory:
+2. Extract the `ovms_hass` folder to your `custom_components` directory:
    ```
    custom_components/
-   └── ovms-hass/
+   └── ovms_hass/
        ├── __init__.py
        ├── manifest.json
        └── ...
@@ -163,7 +163,7 @@ After setup, you can configure additional options:
 For advanced users, YAML configuration is also supported:
 
 ```yaml
-ovms-hass:
+ovms_hass:
   host: api.openvehicles.com
   port: 6869  # 6869 for HTTPS, 6868 for HTTP
   username: your_ovms_username
@@ -611,7 +611,7 @@ Shows cellular network type (2G/3G/4G):
 
 ### Project Structure
 ```
-custom_components/ovms-hass/
+custom_components/ovms_hass/
 ├── __init__.py           # Integration setup & entry point
 ├── manifest.json         # Integration metadata
 ├── config_flow.py        # UI configuration flow

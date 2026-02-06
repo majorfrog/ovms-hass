@@ -5,7 +5,7 @@ It communicates with the OVMS server using REST API (HTTP/HTTPS) for data retrie
 and the binary Protocol v2 (TCP/TLS) for real-time vehicle commands.
 
 Configuration via configuration.yaml:
-    ovms-hass:
+    ovms_hass:
       host: api.openvehicles.com
       port: 6869
       username: your_username
@@ -206,6 +206,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # The vehicle_password is the password configured in the OVMS module itself
         # which is different from the server account password
         vehicle_password = entry.data.get(CONF_VEHICLE_PASSWORD) or entry.data[CONF_PASSWORD]
+        
+        _LOGGER.info(
+            "Setting up Protocol v2 client for vehicle %s - vehicle_password configured: %s",
+            vehicle_id,
+            "YES" if entry.data.get(CONF_VEHICLE_PASSWORD) else "NO (using REST API password as fallback)",
+        )
         
         protocol_client = OVMSProtocolClient(
             host=entry.data.get(CONF_HOST, DEFAULT_HOST),

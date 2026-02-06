@@ -185,39 +185,51 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         Returns:
             True if command was sent successfully
         """
+        _LOGGER.info("Coordinator: Attempting to send command: %s", command)
+        
         if not self.ovms_client:
-            _LOGGER.error("Protocol v2 client not connected")
+            _LOGGER.error("Coordinator: Protocol v2 client not connected")
             return False
 
         if not self.ovms_client.connected:
-            _LOGGER.error("Protocol v2 client is not connected to OVMS server")
+            _LOGGER.error(
+                "Coordinator: Protocol v2 client is not connected to OVMS server (connected=%s, authenticated=%s)",
+                self.ovms_client.connected,
+                getattr(self.ovms_client, 'authenticated', 'N/A'),
+            )
             return False
 
-        _LOGGER.debug("Attempting to send command: %s", command)
+        _LOGGER.info(
+            "Coordinator: Protocol client status - connected=%s, authenticated=%s",
+            self.ovms_client.connected,
+            getattr(self.ovms_client, 'authenticated', 'N/A'),
+        )
 
         try:
             timeout = asyncio.timeout(COMMAND_TIMEOUT)
             async with timeout:
+                _LOGGER.info("Coordinator: Calling ovms_client.send_command(%s)", command)
                 await self.ovms_client.send_command(command)
-                _LOGGER.debug("Command sent successfully: %s", command)
+                _LOGGER.info("Coordinator: Command sent successfully, waiting for response...")
 
                 # Try to read response
                 response = await self.ovms_client.read_response(timeout=5)
                 if response:
-                    _LOGGER.debug("Command response received: %s", response)
+                    _LOGGER.info("Coordinator: Command response received: %s", response)
                 else:
-                    _LOGGER.warning("No response received for command: %s", command)
+                    _LOGGER.warning("Coordinator: No response received for command: %s", command)
 
                 # Refresh data after command execution
+                _LOGGER.debug("Coordinator: Triggering data refresh after command")
                 await self.async_request_refresh()
                 return True
         except TimeoutError:
             _LOGGER.error(
-                "Command timeout after %d seconds: %s", COMMAND_TIMEOUT, command
+                "Coordinator: Command timeout after %d seconds: %s", COMMAND_TIMEOUT, command
             )
             return False
         except (OVMSConnectionError, OVMSAPIError) as err:
-            _LOGGER.error("Failed to send command %s: %s", command, err)
+            _LOGGER.error("Coordinator: Failed to send command %s: %s", command, err)
             return False
 
 
