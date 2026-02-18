@@ -182,6 +182,8 @@ class VehicleStatus:
     # Modem/network mode
     m_mdm_mode: str | None = None
     m_mdm_network: str | None = None
+    # Climate control
+    hvac: bool | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> VehicleStatus:

@@ -9,14 +9,16 @@
           "port": "Serverport",
           "username": "Användarnamn",
           "password": "Lösenord",
-          "vehicle_id": "Fordons-ID (valfritt)"
+          "vehicle_id": "Fordons-ID (valfritt)",
+          "vehicle_password": "Fordonsmodullösenord (valfritt)"
         },
         "data_description": {
           "host": "OVMS-serverns värdnamn (standard: api.openvehicles.com)",
           "port": "HTTPS-port (standard: 6869)",
           "username": "Ditt OVMS-kontoanvändarnamn",
-          "password": "Ditt OVMS-kontolösenord",
-          "vehicle_id": "Fordons-ID att övervaka (lämna tomt för automatisk identifiering)"
+          "password": "Ditt OVMS-serverlösenord (för REST API)",
+          "vehicle_id": "Fordons-ID att övervaka (lämna tomt för automatisk identifiering)",
+          "vehicle_password": "Lösenordet som konfigurerats i din OVMS-modul (för fordonskommandon). Om det inte anges kommer serverlösenordet att användas."
         }
       }
     },

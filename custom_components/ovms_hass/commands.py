@@ -330,11 +330,12 @@ class ClimateControlCommand:
         """Get status command for climate control.
 
         Returns:
-            Command to query climate control status
+            Command to query climate control status (v.e.hvac metric)
         """
         if self.is_sq:
             return OVMSCommandBuilder.generic_command("schedule status")
-        return OVMSCommandBuilder.build_command(CommandCode.GET_STATUS)
+        # Query the v.e.hvac metric to get actual HVAC status
+        return OVMSCommandBuilder.generic_command("metrics get v.e.hvac")
 
 
 class ChargingCommand:

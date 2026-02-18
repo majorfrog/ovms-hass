@@ -9,11 +9,11 @@ Configuration via configuration.yaml:
       host: api.openvehicles.com
       port: 6869
       username: your_username
-      password: your_password
-      vehicle_password: your_vehicle_module_password
+      password: your_rest_api_password
       vehicles:
         - vehicle_id: DEMO
           name: My Vehicle
+          vehicle_password: your_vehicle_module_password
           scan_interval: 300
 """
 
@@ -74,11 +74,11 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Required(CONF_PORT, default=DEFAULT_PORT): cv.port,
                 vol.Required(CONF_USERNAME): cv.string,
                 vol.Required(CONF_PASSWORD): cv.string,
-                vol.Optional(CONF_VEHICLE_PASSWORD): cv.string,
                 vol.Optional("vehicles", default=[]): [
                     {
                         vol.Required("vehicle_id"): cv.string,
                         vol.Optional("name"): cv.string,
+                        vol.Optional(CONF_VEHICLE_PASSWORD): cv.string,
                         vol.Optional(
                             "scan_interval", default=DEFAULT_SCAN_INTERVAL
                         ): cv.positive_int,
@@ -124,7 +124,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             CONF_PORT: ovms_config.get(CONF_PORT, DEFAULT_PORT),
             CONF_USERNAME: ovms_config[CONF_USERNAME],
             CONF_PASSWORD: ovms_config[CONF_PASSWORD],
-            CONF_VEHICLE_PASSWORD: ovms_config.get(CONF_VEHICLE_PASSWORD),
+            CONF_VEHICLE_PASSWORD: vehicle.get(CONF_VEHICLE_PASSWORD),
             "vehicle_id": vehicle.get("vehicle_id"),
             "name": vehicle.get("name", vehicle.get("vehicle_id")),
             "scan_interval": vehicle.get("scan_interval", DEFAULT_SCAN_INTERVAL),

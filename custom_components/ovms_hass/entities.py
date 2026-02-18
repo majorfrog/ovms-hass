@@ -153,8 +153,23 @@ class ClimateControlEntity(OVMSEntity, ClimateEntity):
             icon="mdi:air-conditioner",
         )
         super().__init__(coordinator, config, vehicle_id)
-        # Use optimistic state tracking since OVMS doesn't provide AC status feedback
-        self._attr_hvac_mode = HVACMode.OFF
+
+    @property
+    def hvac_mode(self) -> HVACMode:
+        """Return current HVAC mode based on v.e.hvac status."""
+        # Try to get actual HVAC status from metrics
+        hvac_status = self.coordinator.data.get("status", {}).get("hvac")
+        
+        if hvac_status is not None:
+            # Convert boolean or string to HVAC mode
+            if isinstance(hvac_status, bool):
+                return HVACMode.COOL if hvac_status else HVACMode.OFF
+            elif isinstance(hvac_status, str):
+                # Handle "yes"/"no" or "true"/"false" responses
+                return HVACMode.COOL if hvac_status.lower() in ("yes", "true", "1") else HVACMode.OFF
+        
+        # Default to OFF if no data available
+        return HVACMode.OFF
 
     @property
     def current_temperature(self) -> float | None:
@@ -189,32 +204,24 @@ class ClimateControlEntity(OVMSEntity, ClimateEntity):
             return
 
         try:
-            command_sent = False
             if hvac_mode == HVACMode.COOL:
                 _LOGGER.debug("Sending AC ON command (26,1)")
                 result = await self.coordinator.async_send_command("26,1")
                 if result:
-                    self._attr_hvac_mode = HVACMode.COOL
-                    command_sent = True
                     _LOGGER.info("AC turned ON successfully")
+                    # Trigger immediate refresh to update state
+                    await self.coordinator.async_request_refresh()
                 else:
                     _LOGGER.error("Failed to turn AC ON - command returned False")
             elif hvac_mode == HVACMode.OFF:
                 _LOGGER.debug("Sending AC OFF command (26,0)")
                 result = await self.coordinator.async_send_command("26,0")
                 if result:
-                    self._attr_hvac_mode = HVACMode.OFF
-                    command_sent = True
                     _LOGGER.info("AC turned OFF successfully")
+                    # Trigger immediate refresh to update state
+                    await self.coordinator.async_request_refresh()
                 else:
                     _LOGGER.error("Failed to turn AC OFF - command returned False")
-
-            if command_sent:
-                # Write the state immediately for responsive UI
-                self.async_write_ha_state()
-                _LOGGER.debug(
-                    "Climate entity state updated to %s", self._attr_hvac_mode
-                )
 
         except (ValueError, KeyError, RuntimeError) as err:
             _LOGGER.error("Failed to set HVAC mode to %s: %s", hvac_mode, err)

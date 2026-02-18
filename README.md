@@ -150,8 +150,9 @@ Nine advanced services for vehicle control:
    - **Server Host**: `api.openvehicles.com` (default)
    - **Port**: `6869` (HTTPS, default)
    - **Username**: Your OVMS account username
-   - **Password**: Your OVMS account password
-   - **Vehicle ID**: (Optional) Specific vehicle to monitor
+   - **Password**: Your OVMS REST API password
+   - **Vehicle ID**: Your vehicle ID (e.g., DEMO)
+   - **Vehicle Password**: Password configured in your OVMS module (required for commands)
 
 ### Options
 
@@ -167,13 +168,15 @@ ovms_hass:
   host: api.openvehicles.com
   port: 6869  # 6869 for HTTPS, 6868 for HTTP
   username: your_ovms_username
-  password: your_ovms_password
+  password: your_ovms_rest_api_password
   vehicles:
     - vehicle_id: DEMO
       name: My Tesla
+      vehicle_password: demo_module_password  # Password configured in the OVMS module
       scan_interval: 300  # seconds
     - vehicle_id: TEST
       name: Work Vehicle
+      vehicle_password: test_module_password  # Different password per vehicle
       scan_interval: 600
 ```
 
@@ -581,10 +584,14 @@ Shows cellular network type (2G/3G/4G):
 - Check OVMS server status at https://www.openvehicles.com
 
 ### Commands Not Working
+- **Verify vehicle password**: Commands require the vehicle module password, not the REST API password
+  - Check integration configuration has the correct vehicle_password set
+  - This is the password configured in your OVMS module (Config → Server v2 → Password)
+  - Look for "vehicle_password configured: YES" in Home Assistant logs
 - Vehicle must be online and connected to OVMS server
 - Some commands require vehicle to be awake (try wake-up button first)
 - Check OVMS app to verify vehicle supports command
-- Review Home Assistant logs for command errors
+- Review Home Assistant logs for command errors (look for "Protocol v2 client" messages)
 - Verify vehicle type supports the command (see Limitations section)
 
 ### Data Not Updating
