@@ -1,7 +1,7 @@
 """Home Assistant entity definitions for OVMS integration.
 
 This module defines Home Assistant entity classes suitable for OVMS vehicle data.
-Each entity type (Climate, Lock, Sensor, etc.) is tailored to represent the
+Each entity type (Button, Lock, Sensor, etc.) is tailored to represent the
 corresponding vehicle feature appropriately within Home Assistant.
 """
 
@@ -19,8 +19,6 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.components.button import ButtonEntity
-from homeassistant.components.climate import ClimateEntity
-from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.components.device_tracker.const import SourceType
 from homeassistant.components.lock import LockEntity
@@ -127,108 +125,58 @@ class OVMSEntity(CoordinatorEntity, ABC):
         return device_info
 
 
-class ClimateControlEntity(OVMSEntity, ClimateEntity):
-    """HVAC/Climate control entity for AC control."""
+class ACOnButton(OVMSEntity, ButtonEntity):
+    """Button entity to turn on the vehicle AC.
 
-    _attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL]
-    _attr_supported_features = ClimateEntityFeature(0)
-    _attr_target_temperature_step = 1
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _enable_turn_on_off_backwards_compatibility = False
+    This is a one-way button that sends the AC ON command (Command 26,1).
+    To check if the AC is currently on, use the HVAC binary sensor or
+    the cabin temperature sensor. To turn the AC off, use the
+    ovms_hass.send_command service with command "26,0".
+
+    Note: AC/Climate control (Command 26) does not work on all vehicle types.
+    Some vehicles (e.g., Seres SQ) use different command codes.
+    """
 
     def __init__(
         self,
         coordinator: Any,
         vehicle_id: str,
     ) -> None:
-        """Initialize climate entity.
+        """Initialize AC ON button.
 
         Args:
             coordinator: Data coordinator
             vehicle_id: OVMS vehicle ID
         """
         config = EntityConfig(
-            unique_id="climate",
-            name="Climate Control",
+            unique_id="ac_on",
+            name="AC On",
             icon="mdi:air-conditioner",
         )
         super().__init__(coordinator, config, vehicle_id)
 
-    @property
-    def hvac_mode(self) -> HVACMode:
-        """Return current HVAC mode based on v.e.hvac status."""
-        # Try to get actual HVAC status from metrics
-        hvac_status = self.coordinator.data.get("status", {}).get("hvac")
-        
-        if hvac_status is not None:
-            # Convert boolean or string to HVAC mode
-            if isinstance(hvac_status, bool):
-                return HVACMode.COOL if hvac_status else HVACMode.OFF
-            elif isinstance(hvac_status, str):
-                # Handle "yes"/"no" or "true"/"false" responses
-                return HVACMode.COOL if hvac_status.lower() in ("yes", "true", "1") else HVACMode.OFF
-        
-        # Default to OFF if no data available
-        return HVACMode.OFF
-
-    @property
-    def current_temperature(self) -> float | None:
-        """Return current cabin temperature."""
-        temp = self.coordinator.data.get("status", {}).get("temperature_cabin")
-        if temp is not None:
-            try:
-                return float(temp)
-            except (ValueError, TypeError):
-                return None
-        return None
-
-    @property
-    def target_temperature(self) -> float | None:
-        """Return target temperature (not directly available)."""
-        return self.current_temperature
-
-    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Set new HVAC mode.
-
-        Args:
-            hvac_mode: New HVAC mode
-        """
-        _LOGGER.debug("Climate entity: Setting HVAC mode to %s", hvac_mode)
+    async def async_press(self) -> None:
+        """Handle button press - send AC ON command to vehicle."""
+        _LOGGER.debug("AC ON button pressed for vehicle %s", self.vehicle_id)
 
         if not self.coordinator.ovms_client:
-            _LOGGER.error("OVMS Protocol client not available, cannot control HVAC")
+            _LOGGER.error("OVMS Protocol client not available, cannot turn on AC")
             return
 
         if not self.coordinator.ovms_client.connected:
-            _LOGGER.error("OVMS Protocol client not connected, cannot control HVAC")
+            _LOGGER.error("OVMS Protocol client not connected, cannot turn on AC")
             return
 
         try:
-            if hvac_mode == HVACMode.COOL:
-                _LOGGER.debug("Sending AC ON command (26,1)")
-                result = await self.coordinator.async_send_command("26,1")
-                if result:
-                    _LOGGER.info("AC turned ON successfully")
-                    # Trigger immediate refresh to update state
-                    await self.coordinator.async_request_refresh()
-                else:
-                    _LOGGER.error("Failed to turn AC ON - command returned False")
-            elif hvac_mode == HVACMode.OFF:
-                _LOGGER.debug("Sending AC OFF command (26,0)")
-                result = await self.coordinator.async_send_command("26,0")
-                if result:
-                    _LOGGER.info("AC turned OFF successfully")
-                    # Trigger immediate refresh to update state
-                    await self.coordinator.async_request_refresh()
-                else:
-                    _LOGGER.error("Failed to turn AC OFF - command returned False")
-
+            _LOGGER.debug("Sending AC ON command (26,1)")
+            result = await self.coordinator.async_send_command("26,1")
+            if result:
+                _LOGGER.info("AC ON command sent successfully")
+                await self.coordinator.async_request_refresh()
+            else:
+                _LOGGER.error("Failed to send AC ON command")
         except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to set HVAC mode to %s: %s", hvac_mode, err)
-        except Exception as err:
-            _LOGGER.exception(
-                "Unexpected error setting HVAC mode to %s: %s", hvac_mode, err
-            )
+            _LOGGER.error("Failed to turn on AC: %s", err)
 
 
 class AmbientTemperatureSensor(OVMSEntity, SensorEntity):

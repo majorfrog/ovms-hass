@@ -516,7 +516,9 @@ class OVMSApiClient:
                     if self.session_id:
                         _LOGGER.debug(
                             "Successfully obtained session ID: %s",
-                            self.session_id[:20] if len(self.session_id) > 20 else self.session_id,
+                            self.session_id[:20]
+                            if len(self.session_id) > 20
+                            else self.session_id,
                         )
                 else:
                     # If no session cookie, try to get it from response headers
@@ -529,7 +531,9 @@ class OVMSApiClient:
                             if self.session_id:
                                 _LOGGER.debug(
                                     "Successfully obtained session ID from Set-Cookie: %s",
-                                    self.session_id[:20] if len(self.session_id) > 20 else self.session_id,
+                                    self.session_id[:20]
+                                    if len(self.session_id) > 20
+                                    else self.session_id,
                                 )
 
                     if not self.session_id:
@@ -539,8 +543,8 @@ class OVMSApiClient:
 
         except OVMSAPIError as e:
             raise OVMSAuthenticationError(f"Login failed: {e}") from e
-        except OVMSAuthenticationError:
-            raise
+        except OVMSAuthenticationError as e:
+            raise e
         except aiohttp.ClientError as err:
             raise OVMSAuthenticationError(f"Login error: {err}") from err
 

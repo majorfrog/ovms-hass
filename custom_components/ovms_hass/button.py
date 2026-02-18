@@ -8,6 +8,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import OVMSDataCoordinator
 from .entities import (
+    ACOnButton,
     HomeLinkButton,
     ModuleResetButton,
     RefreshButton,
@@ -29,6 +30,7 @@ async def async_setup_entry(
     entities = [
         RefreshButton(coordinator, coordinator.vehicle_id),
         WakeUpButton(coordinator, coordinator.vehicle_id),
+        ACOnButton(coordinator, coordinator.vehicle_id),
         HomeLinkButton(coordinator, coordinator.vehicle_id, 0),  # HomeLink 1
         HomeLinkButton(coordinator, coordinator.vehicle_id, 1),  # HomeLink 2
         HomeLinkButton(coordinator, coordinator.vehicle_id, 2),  # HomeLink 3

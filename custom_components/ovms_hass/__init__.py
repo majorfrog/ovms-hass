@@ -58,7 +58,6 @@ CONF_VEHICLE_PASSWORD: Final = "vehicle_password"
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
-    Platform.CLIMATE,
     Platform.DEVICE_TRACKER,
     Platform.LOCK,
     Platform.NUMBER,
@@ -226,8 +225,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug("Connecting Protocol v2 client for vehicle %s", vehicle_id)
             await protocol_client.connect()
             coordinator.ovms_client = protocol_client
+            # Start background reader loop and ping keepalive
+            # This keeps the TCP connection alive and processes incoming messages
+            protocol_client.start_background_reader()
             _LOGGER.info(
-                "Protocol v2 client connected successfully for vehicle %s", vehicle_id
+                "Protocol v2 client connected with background reader for vehicle %s",
+                vehicle_id,
             )
         except (OVMSConnectionError, OVMSAPIError) as err:
             _LOGGER.warning(

@@ -234,11 +234,6 @@
         "name": "CAN-skrivning aktiv"
       }
     },
-    "climate": {
-      "climate": {
-        "name": "Klimatkontroll"
-      }
-    },
     "lock": {
       "lock": {
         "name": "Dörrlås"
@@ -284,6 +279,9 @@
       },
       "tpms_reset": {
         "name": "Återställ TPMS-larm"
+      },
+      "ac_on": {
+        "name": "AC på"
       }
     },
     "device_tracker": {

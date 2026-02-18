@@ -2,6 +2,12 @@
 
 This module provides the data coordinator that fetches vehicle data from OVMS
 at regular intervals and manages command execution.
+
+The Protocol v2 TCP connection includes:
+- Background reader loop to process all incoming server messages
+- Periodic ping (MP-0 A) every 5 minutes to keep the connection alive
+- Automatic reconnection on connection failure
+- Proper command response handling (waits for 'c' type messages)
 """
 
 from __future__ import annotations
@@ -22,6 +28,8 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL = 300  # 5 minutes
 COMMAND_TIMEOUT = 10  # seconds
+PING_INTERVAL = 300  # 5 minutes
+RECONNECT_DELAY = 3  # seconds before reconnect attempt
 
 
 class OVMSDataCoordinator(DataUpdateCoordinator):
@@ -179,24 +187,24 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
     async def async_send_command(self, command: str) -> bool:
         """Send a command to the vehicle via Protocol v2.
 
+        Ensures the connection is alive before sending, waits for the actual
+        command response (type 'c'), and reconnects if the connection is dead.
+
         Args:
             command: Command string (e.g., "26,1" for AC ON)
 
         Returns:
-            True if command was sent successfully
+            True if command was sent and acknowledged successfully
         """
         _LOGGER.info("Coordinator: Attempting to send command: %s", command)
-        
+
         if not self.ovms_client:
-            _LOGGER.error("Coordinator: Protocol v2 client not connected")
+            _LOGGER.error("Coordinator: Protocol v2 client not available")
             return False
 
-        if not self.ovms_client.connected:
-            _LOGGER.error(
-                "Coordinator: Protocol v2 client is not connected to OVMS server (connected=%s, authenticated=%s)",
-                self.ovms_client.connected,
-                getattr(self.ovms_client, 'authenticated', 'N/A'),
-            )
+        # Ensure connection is alive, reconnect if needed
+        if not await self._ensure_protocol_connection():
+            _LOGGER.error("Coordinator: Cannot establish Protocol v2 connection")
             return False
 
         _LOGGER.info(
@@ -210,14 +218,34 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
             async with timeout:
                 _LOGGER.info("Coordinator: Calling ovms_client.send_command(%s)", command)
                 await self.ovms_client.send_command(command)
-                _LOGGER.info("Coordinator: Command sent successfully, waiting for response...")
+                _LOGGER.info("Coordinator: Command sent, waiting for command response...")
 
-                # Try to read response
-                response = await self.ovms_client.read_response(timeout=5)
-                if response:
-                    _LOGGER.info("Coordinator: Command response received: %s", response)
+                # Wait specifically for a command response (type 'c'),
+                # skipping any buffered status/info messages
+                response = await self.ovms_client.wait_for_command_response(
+                    timeout=COMMAND_TIMEOUT - 1
+                )
+
+                if response is not None:
+                    _LOGGER.info(
+                        "Coordinator: Command response: code=%s, result=%s, message=%s",
+                        response.get("code"),
+                        response.get("result"),
+                        response.get("message", ""),
+                    )
+                    if response.get("result") == 0:
+                        _LOGGER.info("Coordinator: Command executed successfully")
+                    else:
+                        _LOGGER.warning(
+                            "Coordinator: Command returned non-zero result: %s",
+                            response.get("result"),
+                        )
                 else:
-                    _LOGGER.warning("Coordinator: No response received for command: %s", command)
+                    _LOGGER.warning(
+                        "Coordinator: No command response received for: %s "
+                        "(command may still have been forwarded to vehicle)",
+                        command,
+                    )
 
                 # Refresh data after command execution
                 _LOGGER.debug("Coordinator: Triggering data refresh after command")
@@ -225,11 +253,48 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
                 return True
         except TimeoutError:
             _LOGGER.error(
-                "Coordinator: Command timeout after %d seconds: %s", COMMAND_TIMEOUT, command
+                "Coordinator: Command timeout after %d seconds: %s",
+                COMMAND_TIMEOUT,
+                command,
             )
+            # Connection may be dead - mark for reconnect
+            _LOGGER.info("Coordinator: Marking connection for reconnect after timeout")
+            await self.ovms_client.disconnect()
             return False
+        except OVMSConnectionError as err:
+            _LOGGER.error("Coordinator: Connection error sending command %s: %s", command, err)
+            # Connection is dead - will reconnect on next attempt
+            await self.ovms_client.disconnect()
+            return False
+        except OVMSAPIError as err:
+            _LOGGER.error("Coordinator: API error sending command %s: %s", command, err)
+            return False
+
+    async def _ensure_protocol_connection(self) -> bool:
+        """Ensure the Protocol v2 TCP connection is alive, reconnecting if needed.
+
+        Returns:
+            True if connected and authenticated
+        """
+        if not self.ovms_client:
+            return False
+
+        if self.ovms_client.connected and self.ovms_client.authenticated:
+            return True
+
+        _LOGGER.info("Coordinator: Protocol v2 connection is down, attempting reconnect...")
+        try:
+            await self.ovms_client.disconnect()
+            await self.ovms_client.connect()
+            # Start background reader for the new connection
+            self.ovms_client.start_background_reader()
+            _LOGGER.info("Coordinator: Protocol v2 reconnected successfully")
+            return True
         except (OVMSConnectionError, OVMSAPIError) as err:
-            _LOGGER.error("Coordinator: Failed to send command %s: %s", command, err)
+            _LOGGER.error("Coordinator: Failed to reconnect Protocol v2: %s", err)
+            return False
+        except Exception as err:
+            _LOGGER.exception("Coordinator: Unexpected error during reconnect: %s", err)
             return False
 
 
@@ -283,6 +348,12 @@ class OVMSProtocolClient:
     - HMAC-MD5 for authentication handshake
     - RC4 encryption for message payload
     - Base64 encoding for transport
+
+    This client maintains a background reader loop to:
+    - Keep the TCP connection alive with periodic pings
+    - Process incoming server messages continuously
+    - Properly handle command responses via an asyncio Event
+    - Detect connection failures and enable reconnection
     """
 
     def __init__(
@@ -317,6 +388,14 @@ class OVMSProtocolClient:
         self._tx_cipher: RC4 | None = None
         self._rx_cipher: RC4 | None = None
         self._token: str = ""
+        # Background tasks
+        self._reader_task: asyncio.Task | None = None
+        self._ping_task: asyncio.Task | None = None
+        # Command response handling
+        self._command_response: dict[str, Any] | None = None
+        self._command_event: asyncio.Event = asyncio.Event()
+        # Lock to prevent concurrent command sends
+        self._command_lock: asyncio.Lock = asyncio.Lock()
 
     async def connect(self) -> None:
         """Establish connection to OVMS server and authenticate.
@@ -479,7 +558,20 @@ class OVMSProtocolClient:
             raise OVMSConnectionError(f"Failed to connect to OVMS: {err}") from err
 
     async def disconnect(self) -> None:
-        """Close connection to OVMS server."""
+        """Close connection to OVMS server and stop background tasks."""
+        # Stop background tasks first
+        if self._ping_task and not self._ping_task.done():
+            self._ping_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._ping_task
+            self._ping_task = None
+
+        if self._reader_task and not self._reader_task.done():
+            self._reader_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._reader_task
+            self._reader_task = None
+
         if self._writer:
             self._writer.close()
             with suppress(Exception):
@@ -488,7 +580,196 @@ class OVMSProtocolClient:
         self.authenticated = False
         self._tx_cipher = None
         self._rx_cipher = None
+        self._command_response = None
+        self._command_event.clear()
         _LOGGER.debug("Disconnected from OVMS server")
+
+    def start_background_reader(self) -> None:
+        """Start the background reader loop and ping timer.
+
+        Should be called after a successful connect() and authentication.
+        The background reader continuously reads server messages, keeping the RC4 cipher in sync and
+        enabling proper command response handling.
+        """
+        if not self.connected or not self.authenticated:
+            _LOGGER.warning("Cannot start background reader - not connected/authenticated")
+            return
+
+        # Start the reader loop
+        if self._reader_task is None or self._reader_task.done():
+            self._reader_task = asyncio.ensure_future(self._background_reader_loop())
+            _LOGGER.info("Background reader loop started")
+
+        # Start the ping timer
+        if self._ping_task is None or self._ping_task.done():
+            self._ping_task = asyncio.ensure_future(self._ping_loop())
+            _LOGGER.info("Ping keepalive started (interval: %ds)", PING_INTERVAL)
+
+    async def _background_reader_loop(self) -> None:
+        """Continuously read and process messages from the OVMS server.
+
+        This background reader loop is essential for maintaining the Protocol v2 connection. It:
+        - Keeps the RC4 RX cipher state in sync by processing all messages
+        - Routes command responses to the command_event for send_command callers
+        - Detects connection drops (EOF or read errors)
+        - Logs all received message types for debugging
+        """
+        _LOGGER.debug("Background reader loop: starting")
+        try:
+            while self.connected and self._reader:
+                try:
+                    data = await self._reader.readline()
+
+                    if not data:
+                        # EOF - connection closed by server
+                        _LOGGER.warning("Background reader: Connection closed by server (EOF)")
+                        break
+
+                    response = data.decode("utf-8").strip()
+                    if not response:
+                        continue
+
+                    # Decrypt the message
+                    if not self._rx_cipher:
+                        _LOGGER.warning("Background reader: No RX cipher available")
+                        break
+
+                    decrypted = self._decrypt_message(response)
+
+                    # Validate message format
+                    if not decrypted.startswith("MP-0 "):
+                        _LOGGER.debug(
+                            "Background reader: Non-MP message: %s",
+                            decrypted[:60] if len(decrypted) > 60 else decrypted,
+                        )
+                        continue
+
+                    # Extract message type and payload
+                    msg_type = decrypted[5:6]
+                    payload = decrypted[6:]
+
+                    if msg_type == "c":
+                        # Command response - signal the waiting command sender
+                        _LOGGER.debug("Background reader: Command response: %s", payload)
+                        self._handle_command_response(payload)
+                    elif msg_type in ("S", "T", "D", "L", "a"):
+                        # High-frequency messages (status, timestamp, environment,
+                        # location, ping ack) — processed silently to keep RC4
+                        # cipher in sync without spamming the log.
+                        pass
+                    elif msg_type == "P":
+                        _LOGGER.debug("Background reader: Push notification: %s", payload)
+                    elif msg_type == "Z":
+                        _LOGGER.debug("Background reader: Cars connected: %s", payload)
+                    elif msg_type == "F":
+                        _LOGGER.debug("Background reader: Firmware info: %s", payload)
+                    elif msg_type == "V":
+                        _LOGGER.debug("Background reader: Capabilities: %s", payload)
+                    else:
+                        _LOGGER.debug(
+                            "Background reader: Message type '%s': %s",
+                            msg_type,
+                            payload[:80] if len(payload) > 80 else payload,
+                        )
+
+                except asyncio.CancelledError:
+                    raise
+                except Exception as err:
+                    _LOGGER.error("Background reader: Error reading message: %s", err)
+                    break
+
+        except asyncio.CancelledError:
+            _LOGGER.debug("Background reader loop cancelled")
+            return
+
+        # If we get here, the connection dropped
+        _LOGGER.warning("Background reader: Connection lost, marking as disconnected")
+        self.connected = False
+        self.authenticated = False
+
+    def _handle_command_response(self, payload: str) -> None:
+        """Parse a command response and signal the waiting caller.
+
+        Response format: "<code>,<result_code>[,<message>]"
+
+        Args:
+            payload: Command response payload (without the 'c' prefix)
+        """
+        parts = payload.split(",", 2)
+        response = {
+            "code": int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else None,
+            "result": int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None,
+            "message": parts[2] if len(parts) > 2 else "",
+        }
+        self._command_response = response
+        self._command_event.set()
+
+    async def wait_for_command_response(self, timeout: int = 10) -> dict[str, Any] | None:
+        """Wait for a command response from the background reader.
+
+        The background reader loop processes all incoming messages. When it
+        encounters a command response (type 'c'), it sets the event.
+        This method waits for that event.
+
+        Args:
+            timeout: Maximum seconds to wait for response
+
+        Returns:
+            Command response dict with 'code', 'result', 'message' keys,
+            or None if timeout
+        """
+        # Clear any previous response
+        self._command_event.clear()
+        self._command_response = None
+
+        try:
+            await asyncio.wait_for(self._command_event.wait(), timeout=timeout)
+            return self._command_response
+        except TimeoutError:
+            _LOGGER.debug("Timed out waiting for command response after %ds", timeout)
+            return None
+
+    async def _ping_loop(self) -> None:
+        """Send periodic ping messages to keep the connection alive.
+
+        Sends 'MP-0 A' every 5 minutes. This prevents
+        NAT/firewall timeouts from silently killing the TCP connection.
+        """
+        try:
+            while self.connected:
+                await asyncio.sleep(PING_INTERVAL)
+                if not self.connected or not self._writer:
+                    break
+                try:
+                    _LOGGER.debug("Sending ping (MP-0 A)")
+                    await self._send_encrypted_message("MP-0 A")
+                    _LOGGER.debug("Ping sent successfully")
+                except (OVMSConnectionError, OSError) as err:
+                    _LOGGER.warning("Ping failed, connection may be dead: %s", err)
+                    self.connected = False
+                    self.authenticated = False
+                    break
+        except asyncio.CancelledError:
+            _LOGGER.debug("Ping loop cancelled")
+
+    async def _send_encrypted_message(self, message: str) -> None:
+        """Encrypt and send a message over the TCP connection.
+
+        Args:
+            message: Plaintext message to send (e.g., "MP-0 A" or "MP-0 C26,1")
+
+        Raises:
+            OVMSConnectionError: If not connected or send fails
+        """
+        if not self.connected or not self._writer:
+            raise OVMSConnectionError("Not connected to OVMS server")
+        if not self._tx_cipher:
+            raise OVMSConnectionError("Not authenticated - no TX cipher")
+
+        encrypted = self._encrypt_message(message)
+        full_message = f"{encrypted}\r\n"
+        self._writer.write(full_message.encode("utf-8"))
+        await self._writer.drain()
 
     def _encrypt_message(self, message: str) -> str:
         """Encrypt a message using RC4 and base64 encode.
@@ -528,6 +809,10 @@ class OVMSProtocolClient:
     async def send_command(self, command: str) -> None:
         """Send command to vehicle.
 
+        The command is encrypted and sent over the TCP connection.
+        Use wait_for_command_response() afterwards to get the server's response.
+        The background reader loop will route the response.
+
         Args:
             command: Command string (e.g., "26,1" for climate ON)
 
@@ -543,104 +828,33 @@ class OVMSProtocolClient:
             raise OVMSConnectionError("Not authenticated with OVMS server")
 
         # Build the command message
-        # Format: "MP-0 C<command_code>,<parameters>"
-        # The command string is like "26,1" - command code 26, parameter 1
         message = f"MP-0 C{command}"
         _LOGGER.debug("Sending command: %s", message)
 
         try:
-            # Encrypt the message with RC4 and Base64 encode
-            encrypted = self._encrypt_message(message)
-
-            # Send just the encrypted Base64 string (with newline)
-            full_message = f"{encrypted}\r\n"
-            self._writer.write(full_message.encode("utf-8"))
-            await self._writer.drain()
-            _LOGGER.debug(
-                "Command sent successfully (encrypted: %s...)", encrypted[:20]
-            )
-
+            async with self._command_lock:
+                # Clear any previous command response before sending
+                self._command_event.clear()
+                self._command_response = None
+                await self._send_encrypted_message(message)
+            _LOGGER.debug("Command sent successfully")
         except Exception as err:
             _LOGGER.error("Failed to send command: %s", err)
             raise OVMSConnectionError(f"Failed to send command: {err}") from err
 
     async def read_response(self, timeout: int = 5) -> str | None:
-        """Read and decrypt response from server.
+        """Read a response via the background reader's command event.
 
-        After authentication, all messages from the server are encrypted:
-        - Server sends Base64 encoded RC4 encrypted data
-        - Decrypted message format: "MP-0 <code><data>"
+        This is a compatibility wrapper. New code should use
+        wait_for_command_response() directly.
 
         Args:
             timeout: Read timeout in seconds
 
         Returns:
-            Decrypted response string or None if timeout
-
-        Raises:
-            OVMSConnectionError: If not connected
+            Response string or None if timeout
         """
-        if not self.connected or not self._reader:
-            raise OVMSConnectionError("Not connected to OVMS server")
-
-        try:
-            data = await asyncio.wait_for(
-                self._reader.readline(),
-                timeout=timeout,
-            )
-
-            if not data:
-                return None
-
-            # All post-auth messages are Base64 encoded RC4 encrypted
-            response = data.decode("utf-8").strip()
-            _LOGGER.debug(
-                "Raw encrypted response: %s...",
-                response[:40] if len(response) > 40 else response,
-            )
-
-            # Decrypt the message
-            if self._rx_cipher:
-                decrypted = self._decrypt_message(response)
-                _LOGGER.debug("Decrypted response: %s", decrypted)
-
-                # Validate message format
-                if not decrypted.startswith("MP-0 "):
-                    _LOGGER.warning("Invalid decrypted message format: %s", decrypted)
-                    return decrypted
-
-                # Extract message type and payload
-                msg_type = decrypted[5:6]
-                payload = decrypted[6:]
-
-                # Handle different message types
-                if msg_type == "c":
-                    # Command response
-                    _LOGGER.debug("Command response: %s", payload)
-                    return payload
-                elif msg_type == "Z":
-                    # Cars connected count
-                    _LOGGER.debug("Cars connected: %s", payload)
-                    return f"Z:{payload}"
-                elif msg_type == "T":
-                    # Last update timestamp
-                    _LOGGER.debug("Last update: %s", payload)
-                    return f"T:{payload}"
-                elif msg_type == "P":
-                    # Push notification
-                    _LOGGER.debug("Push notification: %s", payload)
-                    return f"PUSH:{payload}"
-                else:
-                    # Other message types (S=status, L=location, D=environment, etc.)
-                    _LOGGER.debug("Message type %s: %s", msg_type, payload)
-                    return f"{msg_type}:{payload}"
-            else:
-                _LOGGER.warning("No RX cipher - cannot decrypt message")
-                return response
-
-        except TimeoutError:
-            _LOGGER.debug("Read timeout after %d seconds", timeout)
-            return None
-        except Exception as err:
-            _LOGGER.error("Error reading response: %s", err)
-            return None
+        response = await self.wait_for_command_response(timeout=timeout)
+        if response is not None:
+            return f"c{response.get('code', '')},{response.get('result', '')},{response.get('message', '')}"
+        return None

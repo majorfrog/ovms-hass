@@ -234,11 +234,6 @@
         "name": "CAN Write Active"
       }
     },
-    "climate": {
-      "climate": {
-        "name": "Climate Control"
-      }
-    },
     "lock": {
       "lock": {
         "name": "Door Lock"
@@ -284,6 +279,9 @@
       },
       "tpms_reset": {
         "name": "Reset TPMS Alerts"
+      },
+      "ac_on": {
+        "name": "AC On"
       }
     },
     "device_tracker": {
