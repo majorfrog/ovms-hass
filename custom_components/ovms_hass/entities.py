@@ -728,10 +728,15 @@ class GSMSignalSensor(OVMSEntity, SensorEntity):
 
 
 class WiFiSignalSensor(OVMSEntity, SensorEntity):
-    """Sensor for WiFi signal strength."""
+    """Sensor for WiFi signal strength.
+
+    Note: WiFi signal quality is not available via OVMS Protocol v2.
+    This sensor is disabled by default.
+    """
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "dBm"
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: Any, vehicle_id: str) -> None:
         """Initialize WiFi signal sensor."""
@@ -1488,6 +1493,26 @@ class CarOnSensor(OVMSEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         """Return True if car is on/started."""
         return self.coordinator.data.get("status", {}).get("caron")
+
+
+class HVACSensor(OVMSEntity, BinarySensorEntity):
+    """Binary sensor for HVAC / climate control status."""
+
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+
+    def __init__(self, coordinator: Any, vehicle_id: str) -> None:
+        """Initialize HVAC sensor."""
+        config = EntityConfig(
+            unique_id="hvac",
+            name="HVAC",
+            icon="mdi:air-conditioner",
+        )
+        super().__init__(coordinator, config, vehicle_id)
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True if HVAC / climate control is active."""
+        return self.coordinator.data.get("status", {}).get("hvac")
 
 
 class HeadlightsSensor(OVMSEntity, BinarySensorEntity):

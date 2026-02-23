@@ -17,6 +17,7 @@ from .entities import (
     FrontRightDoorSensor,
     GPSLockSensor,
     HeadlightsSensor,
+    HVACSensor,
     ParkingBrakeSensor,
     PilotPresentSensor,
     RearLeftDoorSensor,
@@ -53,6 +54,7 @@ async def async_setup_entry(
         PilotPresentSensor(coordinator, coordinator.vehicle_id),  # Enabled - useful for charging
         CarOnSensor(coordinator, coordinator.vehicle_id),  # Enabled - useful for automations
         AlarmSensor(coordinator, coordinator.vehicle_id),  # Enabled - security relevant
+        HVACSensor(coordinator, coordinator.vehicle_id),  # Enabled - climate control status
 
         # Less common sensors (disabled by default)
         ParkingBrakeSensor(coordinator, coordinator.vehicle_id),  # Disabled

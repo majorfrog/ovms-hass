@@ -118,6 +118,14 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
             )
             self.data["vehicle"] = vehicle if not isinstance(vehicle, Exception) else {}
 
+            # Merge data from Protocol v2 messages (F, D, etc.)
+            # These fill in fields not available via the REST API
+            # (e.g., HVAC from D message, GSM signal from F message)
+            if self.ovms_client and self.ovms_client.protocol_data:
+                for key, value in self.ovms_client.protocol_data.items():
+                    if value is not None:
+                        self.data["status"][key] = value
+
             # Log any exceptions that occurred (not as errors, just debug)
             for task_name, result in [
                 ("status", status),
@@ -396,6 +404,8 @@ class OVMSProtocolClient:
         self._command_event: asyncio.Event = asyncio.Event()
         # Lock to prevent concurrent command sends
         self._command_lock: asyncio.Lock = asyncio.Lock()
+        # Data parsed from Protocol v2 messages (F, D, etc.)
+        self.protocol_data: dict[str, Any] = {}
 
     async def connect(self) -> None:
         """Establish connection to OVMS server and authenticate.
@@ -652,8 +662,15 @@ class OVMSProtocolClient:
                         # Command response - signal the waiting command sender
                         _LOGGER.debug("Background reader: Command response: %s", payload)
                         self._handle_command_response(payload)
-                    elif msg_type in ("S", "T", "D", "L", "a"):
-                        # High-frequency messages (status, timestamp, environment,
+                    elif msg_type == "F":
+                        # Firmware info - parse for GSM signal, car type, etc.
+                        _LOGGER.debug("Background reader: Firmware info: %s", payload)
+                        self._parse_firmware_message(payload)
+                    elif msg_type == "D":
+                        # Environment/doors - parse for HVAC, etc.
+                        self._parse_environment_message(payload)
+                    elif msg_type in ("S", "T", "L", "a"):
+                        # High-frequency messages (status, timestamp,
                         # location, ping ack) — processed silently to keep RC4
                         # cipher in sync without spamming the log.
                         pass
@@ -661,8 +678,6 @@ class OVMSProtocolClient:
                         _LOGGER.debug("Background reader: Push notification: %s", payload)
                     elif msg_type == "Z":
                         _LOGGER.debug("Background reader: Cars connected: %s", payload)
-                    elif msg_type == "F":
-                        _LOGGER.debug("Background reader: Firmware info: %s", payload)
                     elif msg_type == "V":
                         _LOGGER.debug("Background reader: Capabilities: %s", payload)
                     else:
@@ -703,6 +718,68 @@ class OVMSProtocolClient:
         }
         self._command_response = response
         self._command_event.set()
+
+    def _parse_firmware_message(self, payload: str) -> None:
+        """Parse firmware message (Protocol v2 type F).
+
+        OVMS v3 F message CSV format:
+          0: firmware version
+          1: VIN
+          2: network signal quality (dBm)
+          3: canwrite (0/1)
+          4: car type
+          5: network provider
+          6: service range
+          7: service time
+          8: hardware version
+          9: modem mode
+
+        Args:
+            payload: CSV payload after the 'F' type character
+        """
+        parts = payload.split(",")
+        data: dict[str, Any] = {}
+
+        if len(parts) > 0 and parts[0]:
+            data["m_firmware"] = parts[0]
+        if len(parts) > 1 and parts[1]:
+            data["car_vin"] = parts[1]
+        if len(parts) > 2 and parts[2]:
+            try:
+                data["car_gsm_signal"] = int(float(parts[2]))
+            except (ValueError, TypeError):
+                pass
+        if len(parts) > 4 and parts[4]:
+            data["car_type"] = parts[4]
+        if len(parts) > 8 and parts[8]:
+            data["m_hardware"] = parts[8]
+        if len(parts) > 9 and parts[9]:
+            data["m_mdm_mode"] = parts[9]
+
+        if data:
+            self.protocol_data.update(data)
+            _LOGGER.debug("Parsed firmware data: %s", data)
+
+    def _parse_environment_message(self, payload: str) -> None:
+        """Parse environment/doors message (Protocol v2 type D).
+
+        OVMS v3 D message CSV format (relevant fields):
+          0: doors1 byte
+          ...
+          17: doors5 byte - bit 7 (0x80) = HVAC active
+
+        Args:
+            payload: CSV payload after the 'D' type character
+        """
+        parts = payload.split(",")
+
+        # doors5 is at index 17
+        if len(parts) > 17 and parts[17]:
+            try:
+                doors5 = int(parts[17])
+                self.protocol_data["hvac"] = bool(doors5 & 0x80)
+            except (ValueError, TypeError):
+                pass
 
     async def wait_for_command_response(self, timeout: int = 10) -> dict[str, Any] | None:
         """Wait for a command response from the background reader.
