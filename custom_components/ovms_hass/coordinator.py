@@ -13,10 +13,10 @@ The Protocol v2 TCP connection includes:
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
-from datetime import timedelta
 import logging
 import ssl
+from contextlib import suppress
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -210,73 +210,88 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
             _LOGGER.error("Coordinator: Protocol v2 client not available")
             return False
 
-        # Ensure connection is alive, reconnect if needed
-        if not await self._ensure_protocol_connection():
-            _LOGGER.error("Coordinator: Cannot establish Protocol v2 connection")
-            return False
+        for attempt in (1, 2):
+            # Ensure connection is alive, reconnect if needed
+            if not await self._ensure_protocol_connection():
+                _LOGGER.error("Coordinator: Cannot establish Protocol v2 connection")
+                return False
 
-        _LOGGER.info(
-            "Coordinator: Protocol client status - connected=%s, authenticated=%s",
-            self.ovms_client.connected,
-            getattr(self.ovms_client, 'authenticated', 'N/A'),
-        )
+            _LOGGER.info(
+                "Coordinator: Protocol client status - connected=%s, authenticated=%s (attempt %d/2)",
+                self.ovms_client.connected,
+                getattr(self.ovms_client, "authenticated", "N/A"),
+                attempt,
+            )
 
-        try:
-            timeout = asyncio.timeout(COMMAND_TIMEOUT)
-            async with timeout:
-                _LOGGER.info("Coordinator: Calling ovms_client.send_command(%s)", command)
-                await self.ovms_client.send_command(command)
-                _LOGGER.info("Coordinator: Command sent, waiting for command response...")
+            try:
+                timeout = asyncio.timeout(COMMAND_TIMEOUT)
+                async with timeout:
+                    _LOGGER.info("Coordinator: Calling ovms_client.send_command(%s)", command)
+                    await self.ovms_client.send_command(command)
+                    _LOGGER.info("Coordinator: Command sent, waiting for command response...")
 
-                # Wait specifically for a command response (type 'c'),
-                # skipping any buffered status/info messages
-                response = await self.ovms_client.wait_for_command_response(
-                    timeout=COMMAND_TIMEOUT - 1
-                )
-
-                if response is not None:
-                    _LOGGER.info(
-                        "Coordinator: Command response: code=%s, result=%s, message=%s",
-                        response.get("code"),
-                        response.get("result"),
-                        response.get("message", ""),
+                    # Wait specifically for a command response (type 'c'),
+                    # skipping any buffered status/info messages
+                    response = await self.ovms_client.wait_for_command_response(
+                        timeout=COMMAND_TIMEOUT - 1
                     )
-                    if response.get("result") == 0:
-                        _LOGGER.info("Coordinator: Command executed successfully")
+
+                    if response is not None:
+                        _LOGGER.info(
+                            "Coordinator: Command response: code=%s, result=%s, message=%s",
+                            response.get("code"),
+                            response.get("result"),
+                            response.get("message", ""),
+                        )
+                        if response.get("result") == 0:
+                            _LOGGER.info("Coordinator: Command executed successfully")
+                        else:
+                            _LOGGER.warning(
+                                "Coordinator: Command returned non-zero result: %s",
+                                response.get("result"),
+                            )
                     else:
                         _LOGGER.warning(
-                            "Coordinator: Command returned non-zero result: %s",
-                            response.get("result"),
+                            "Coordinator: No command response received for: %s "
+                            "(command may still have been forwarded to vehicle)",
+                            command,
                         )
-                else:
-                    _LOGGER.warning(
-                        "Coordinator: No command response received for: %s "
-                        "(command may still have been forwarded to vehicle)",
-                        command,
-                    )
 
-                # Refresh data after command execution
-                _LOGGER.debug("Coordinator: Triggering data refresh after command")
-                await self.async_request_refresh()
-                return True
-        except TimeoutError:
-            _LOGGER.error(
-                "Coordinator: Command timeout after %d seconds: %s",
-                COMMAND_TIMEOUT,
-                command,
-            )
-            # Connection may be dead - mark for reconnect
-            _LOGGER.info("Coordinator: Marking connection for reconnect after timeout")
-            await self.ovms_client.disconnect()
-            return False
-        except OVMSConnectionError as err:
-            _LOGGER.error("Coordinator: Connection error sending command %s: %s", command, err)
-            # Connection is dead - will reconnect on next attempt
-            await self.ovms_client.disconnect()
-            return False
-        except OVMSAPIError as err:
-            _LOGGER.error("Coordinator: API error sending command %s: %s", command, err)
-            return False
+                    # Refresh data after command execution
+                    _LOGGER.debug("Coordinator: Triggering data refresh after command")
+                    await self.async_request_refresh()
+                    return True
+            except TimeoutError:
+                _LOGGER.error(
+                    "Coordinator: Command timeout after %d seconds: %s (attempt %d/2)",
+                    COMMAND_TIMEOUT,
+                    command,
+                    attempt,
+                )
+                # Connection may be dead - mark for reconnect.
+                _LOGGER.info("Coordinator: Marking connection for reconnect after timeout")
+                await self.ovms_client.disconnect(intentional=False)
+            except OVMSConnectionError as err:
+                _LOGGER.error(
+                    "Coordinator: Connection error sending command %s on attempt %d/2: %s",
+                    command,
+                    attempt,
+                    err,
+                )
+                # Connection is dead - reconnect before retry.
+                await self.ovms_client.disconnect(intentional=False)
+            except OVMSAPIError as err:
+                _LOGGER.error("Coordinator: API error sending command %s: %s", command, err)
+                return False
+
+            if attempt == 1:
+                _LOGGER.info(
+                    "Coordinator: Retrying command after reconnect: %s",
+                    command,
+                )
+
+        _LOGGER.error("Coordinator: Command failed after reconnect retry: %s", command)
+        return False
 
     async def _ensure_protocol_connection(self) -> bool:
         """Ensure the Protocol v2 TCP connection is alive, reconnecting if needed.
@@ -292,7 +307,7 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
 
         _LOGGER.info("Coordinator: Protocol v2 connection is down, attempting reconnect...")
         try:
-            await self.ovms_client.disconnect()
+            await self.ovms_client.disconnect(intentional=False)
             await self.ovms_client.connect()
             # Start background reader for the new connection
             self.ovms_client.start_background_reader()
@@ -404,6 +419,10 @@ class OVMSProtocolClient:
         self._command_event: asyncio.Event = asyncio.Event()
         # Lock to prevent concurrent command sends
         self._command_lock: asyncio.Lock = asyncio.Lock()
+        # Lock and task for automatic reconnect on unexpected disconnects
+        self._reconnect_lock: asyncio.Lock = asyncio.Lock()
+        self._reconnect_task: asyncio.Task | None = None
+        self._auto_reconnect_enabled = True
         # Data parsed from Protocol v2 messages (F, D, etc.)
         self.protocol_data: dict[str, Any] = {}
 
@@ -567,8 +586,26 @@ class OVMSProtocolClient:
             _LOGGER.exception("Failed to connect/authenticate with OVMS server")
             raise OVMSConnectionError(f"Failed to connect to OVMS: {err}") from err
 
-    async def disconnect(self) -> None:
-        """Close connection to OVMS server and stop background tasks."""
+    async def disconnect(self, intentional: bool = True) -> None:
+        """Close connection to OVMS server and stop background tasks.
+
+        Args:
+            intentional: True when caller is intentionally shutting down.
+                False for transient reconnect workflows.
+        """
+        if intentional:
+            self._auto_reconnect_enabled = False
+
+        if (
+            self._reconnect_task
+            and not self._reconnect_task.done()
+            and asyncio.current_task() is not self._reconnect_task
+        ):
+            self._reconnect_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._reconnect_task
+            self._reconnect_task = None
+
         # Stop background tasks first
         if self._ping_task and not self._ping_task.done():
             self._ping_task.cancel()
@@ -586,6 +623,8 @@ class OVMSProtocolClient:
             self._writer.close()
             with suppress(Exception):
                 await self._writer.wait_closed()
+        self._reader = None
+        self._writer = None
         self.connected = False
         self.authenticated = False
         self._tx_cipher = None
@@ -701,6 +740,50 @@ class OVMSProtocolClient:
         _LOGGER.warning("Background reader: Connection lost, marking as disconnected")
         self.connected = False
         self.authenticated = False
+        await self._schedule_reconnect()
+
+    async def _schedule_reconnect(self) -> None:
+        """Schedule automatic reconnect after an unexpected disconnect."""
+        if not self._auto_reconnect_enabled:
+            _LOGGER.debug("Auto-reconnect disabled, not scheduling reconnect")
+            return
+
+        if self._reconnect_task and not self._reconnect_task.done():
+            _LOGGER.debug("Reconnect task already active")
+            return
+
+        self._reconnect_task = asyncio.create_task(self._reconnect_loop())
+
+    async def _reconnect_loop(self) -> None:
+        """Try to restore Protocol v2 connection in the background."""
+        delay = RECONNECT_DELAY
+        max_delay = 60
+
+        while self._auto_reconnect_enabled and not self.connected:
+            async with self._reconnect_lock:
+                if self.connected:
+                    return
+
+                try:
+                    _LOGGER.info(
+                        "Protocol v2 auto-reconnect: reconnecting to %s:%d",
+                        self.host,
+                        self.port,
+                    )
+                    await self.disconnect(intentional=False)
+                    await self.connect()
+                    self.start_background_reader()
+                    _LOGGER.info("Protocol v2 auto-reconnect successful")
+                    return
+                except OVMSConnectionError as err:
+                    _LOGGER.warning(
+                        "Protocol v2 auto-reconnect failed, retrying in %ds: %s",
+                        delay,
+                        err,
+                    )
+
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, max_delay)
 
     def _handle_command_response(self, payload: str) -> None:
         """Parse a command response and signal the waiting caller.
@@ -777,7 +860,9 @@ class OVMSProtocolClient:
         if len(parts) > 17 and parts[17]:
             try:
                 doors5 = int(parts[17])
-                self.protocol_data["hvac"] = bool(doors5 & 0x80)
+                hvac_on = bool(doors5 & 0x80)
+                self.protocol_data["hvac"] = hvac_on
+                self.protocol_data["car_hvac_on"] = hvac_on
             except (ValueError, TypeError):
                 pass
 

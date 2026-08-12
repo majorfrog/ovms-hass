@@ -123,7 +123,9 @@ async def async_send_command(hass: HomeAssistant, call: ServiceCall) -> None:
     try:
         # Command 7 is for generic commands
         _LOGGER.info("Sending command to %s: %s", vehicle_id, command)
-        await coordinator.ovms_client.send_command(f"7,{command}")
+        result = await coordinator.async_send_command(f"7,{command}")
+        if not result:
+            _LOGGER.error("Failed to send command to %s", vehicle_id)
     except Exception as err:
         _LOGGER.error("Failed to send command to %s: %s", vehicle_id, err)
 
@@ -153,7 +155,9 @@ async def async_send_sms(hass: HomeAssistant, call: ServiceCall) -> None:
     try:
         # Command 40 is for sending SMS
         _LOGGER.info("Sending SMS from %s to %s", vehicle_id, phone_number)
-        await coordinator.ovms_client.send_command(f"40,{phone_number},{message}")
+        result = await coordinator.async_send_command(f"40,{phone_number},{message}")
+        if not result:
+            _LOGGER.error("Failed to send SMS from %s", vehicle_id)
     except Exception as err:
         _LOGGER.error("Failed to send SMS from %s: %s", vehicle_id, err)
 
@@ -189,12 +193,18 @@ async def async_set_charge_timer(hass: HomeAssistant, call: ServiceCall) -> None
                 hour = int(parts[0])
                 minute = int(parts[1])
                 _LOGGER.info("Setting charge timer for %s to %s", vehicle_id, start_time)
-                await coordinator.ovms_client.send_command(f"17,1,{hour},{minute}")
+                result = await coordinator.async_send_command(
+                    f"17,1,{hour},{minute}"
+                )
+                if not result:
+                    _LOGGER.error("Failed to set charge timer for %s", vehicle_id)
             else:
                 _LOGGER.error("Invalid time format: %s (expected HH:MM)", start_time)
         else:
             _LOGGER.info("Disabling charge timer for %s", vehicle_id)
-            await coordinator.ovms_client.send_command("17,0")
+            result = await coordinator.async_send_command("17,0")
+            if not result:
+                _LOGGER.error("Failed to disable charge timer for %s", vehicle_id)
     except Exception as err:
         _LOGGER.error("Failed to set charge timer for %s: %s", vehicle_id, err)
 
@@ -223,7 +233,9 @@ async def async_wakeup_subsystem(hass: HomeAssistant, call: ServiceCall) -> None
     try:
         # Command 19 is for waking specific subsystems
         _LOGGER.info("Waking subsystem %d for %s", subsystem, vehicle_id)
-        await coordinator.ovms_client.send_command(f"19,{subsystem}")
+        result = await coordinator.async_send_command(f"19,{subsystem}")
+        if not result:
+            _LOGGER.error("Failed to wake subsystem for %s", vehicle_id)
     except Exception as err:
         _LOGGER.error("Failed to wake subsystem for %s: %s", vehicle_id, err)
 
@@ -253,8 +265,9 @@ async def async_tpms_map_wheel(hass: HomeAssistant, call: ServiceCall) -> None:
     try:
         # TPMS mapping uses generic command
         _LOGGER.info("Mapping TPMS sensor %s to wheel %s for %s", sensor_id, wheel, vehicle_id)
-        await coordinator.ovms_client.send_command(f"7,tpms map {wheel} {sensor_id}")
-        await coordinator.async_request_refresh()
+        result = await coordinator.async_send_command(f"7,tpms map {wheel} {sensor_id}")
+        if not result:
+            _LOGGER.error("Failed to map TPMS for %s", vehicle_id)
     except Exception as err:
         _LOGGER.error("Failed to map TPMS for %s: %s", vehicle_id, err)
 
@@ -283,7 +296,9 @@ async def async_get_feature(hass: HomeAssistant, call: ServiceCall) -> None:
     try:
         # Command 1 is for getting features
         _LOGGER.info("Getting feature %d for %s", feature_number, vehicle_id)
-        await coordinator.ovms_client.send_command("1")
+        result = await coordinator.async_send_command("1")
+        if not result:
+            _LOGGER.error("Failed to get feature for %s", vehicle_id)
     except Exception as err:
         _LOGGER.error("Failed to get feature for %s: %s", vehicle_id, err)
 
@@ -313,7 +328,9 @@ async def async_set_feature(hass: HomeAssistant, call: ServiceCall) -> None:
     try:
         # Command 2 is for setting features
         _LOGGER.info("Setting feature %d to %s for %s", feature_number, value, vehicle_id)
-        await coordinator.ovms_client.send_command(f"2,{feature_number},{value}")
+        result = await coordinator.async_send_command(f"2,{feature_number},{value}")
+        if not result:
+            _LOGGER.error("Failed to set feature for %s", vehicle_id)
     except Exception as err:
         _LOGGER.error("Failed to set feature for %s: %s", vehicle_id, err)
 
@@ -342,7 +359,9 @@ async def async_get_parameter(hass: HomeAssistant, call: ServiceCall) -> None:
     try:
         # Command 3 is for getting parameters
         _LOGGER.info("Getting parameter %d for %s", parameter_number, vehicle_id)
-        await coordinator.ovms_client.send_command("3")
+        result = await coordinator.async_send_command("3")
+        if not result:
+            _LOGGER.error("Failed to get parameter for %s", vehicle_id)
     except Exception as err:
         _LOGGER.error("Failed to get parameter for %s: %s", vehicle_id, err)
 
@@ -372,7 +391,9 @@ async def async_set_parameter(hass: HomeAssistant, call: ServiceCall) -> None:
     try:
         # Command 4 is for setting parameters
         _LOGGER.info("Setting parameter %d to %s for %s", parameter_number, value, vehicle_id)
-        await coordinator.ovms_client.send_command(f"4,{parameter_number},{value}")
+        result = await coordinator.async_send_command(f"4,{parameter_number},{value}")
+        if not result:
+            _LOGGER.error("Failed to set parameter for %s", vehicle_id)
     except Exception as err:
         _LOGGER.error("Failed to set parameter for %s: %s", vehicle_id, err)
 
