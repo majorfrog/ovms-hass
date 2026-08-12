@@ -28,7 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL = 300  # 5 minutes
 COMMAND_TIMEOUT = 10  # seconds
-PING_INTERVAL = 300  # 5 minutes
+PING_INTERVAL = 120  # 2 minutes
 RECONNECT_DELAY = 3  # seconds before reconnect attempt
 
 
@@ -860,9 +860,7 @@ class OVMSProtocolClient:
         if len(parts) > 17 and parts[17]:
             try:
                 doors5 = int(parts[17])
-                hvac_on = bool(doors5 & 0x80)
-                self.protocol_data["hvac"] = hvac_on
-                self.protocol_data["car_hvac_on"] = hvac_on
+                self.protocol_data["hvac"] = bool(doors5 & 0x80)
             except (ValueError, TypeError):
                 pass
 
