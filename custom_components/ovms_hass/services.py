@@ -6,11 +6,13 @@ that don't fit into standard entity types.
 
 from __future__ import annotations
 
+from functools import partial
 import logging
 
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,384 +87,150 @@ PARAMETER_SCHEMA = vol.Schema(
 
 
 def _get_coordinator(hass: HomeAssistant, vehicle_id: str):
-    """Get coordinator for a specific vehicle."""
-    if DOMAIN not in hass.data:
-        return None
+    """Return the coordinator for a vehicle.
 
-    # Find the coordinator for this vehicle
-    for entry_id, entry_data in hass.data[DOMAIN].items():
-        if isinstance(entry_data, dict):
-            coordinator = entry_data.get("coordinator")
-            if coordinator and coordinator.vehicle_id == vehicle_id:
-                return coordinator
+    Raises:
+        ServiceValidationError: If no loaded entry has this vehicle
+    """
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        runtime_data = getattr(entry, "runtime_data", None)
+        coordinator = (
+            runtime_data.get("coordinator") if isinstance(runtime_data, dict) else None
+        )
+        if coordinator and coordinator.vehicle_id == vehicle_id:
+            return coordinator
 
-    return None
+    raise ServiceValidationError(f"Unknown OVMS vehicle {vehicle_id}")
 
 
 async def async_send_command(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Handle send_command service call.
-
-    Sends a generic command to the vehicle using Command 7.
-
-    Args:
-        hass: Home Assistant instance
-        call: Service call data containing vehicle_id and command
-    """
+    """Send a generic shell command to the vehicle (Command 7)."""
     vehicle_id = call.data["vehicle_id"]
     command = call.data["command"]
-
     coordinator = _get_coordinator(hass, vehicle_id)
-    if not coordinator:
-        _LOGGER.error("Vehicle %s not found", vehicle_id)
-        return
-
-    if not coordinator.ovms_client:
-        _LOGGER.error("OVMS Protocol client not available for vehicle %s", vehicle_id)
-        return
-
-    try:
-        # Command 7 is for generic commands
-        _LOGGER.info("Sending command to %s: %s", vehicle_id, command)
-        result = await coordinator.async_send_command(f"7,{command}")
-        if not result:
-            _LOGGER.error("Failed to send command to %s", vehicle_id)
-    except Exception as err:
-        _LOGGER.error("Failed to send command to %s: %s", vehicle_id, err)
+    _LOGGER.info("Sending command to %s: %s", vehicle_id, command)
+    await coordinator.async_send_command(f"7,{command}", command)
 
 
 async def async_send_sms(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Handle send_sms service call.
-
-    Sends an SMS via the vehicle's modem using Command 40.
-
-    Args:
-        hass: Home Assistant instance
-        call: Service call data containing vehicle_id, phone_number, and message
-    """
+    """Send an SMS via the vehicle's modem (Command 40)."""
     vehicle_id = call.data["vehicle_id"]
     phone_number = call.data["phone_number"]
     message = call.data["message"]
-
     coordinator = _get_coordinator(hass, vehicle_id)
-    if not coordinator:
-        _LOGGER.error("Vehicle %s not found", vehicle_id)
-        return
-
-    if not coordinator.ovms_client:
-        _LOGGER.error("OVMS Protocol client not available for vehicle %s", vehicle_id)
-        return
-
-    try:
-        # Command 40 is for sending SMS
-        _LOGGER.info("Sending SMS from %s to %s", vehicle_id, phone_number)
-        result = await coordinator.async_send_command(f"40,{phone_number},{message}")
-        if not result:
-            _LOGGER.error("Failed to send SMS from %s", vehicle_id)
-    except Exception as err:
-        _LOGGER.error("Failed to send SMS from %s: %s", vehicle_id, err)
+    _LOGGER.info("Sending SMS from %s to %s", vehicle_id, phone_number)
+    await coordinator.async_send_command(f"40,{phone_number},{message}", "SMS")
 
 
 async def async_set_charge_timer(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Handle set_charge_timer service call.
-
-    Sets or clears the charge timer using Command 17.
-
-    Args:
-        hass: Home Assistant instance
-        call: Service call data containing vehicle_id, start_time, and enabled
-    """
+    """Set or clear the charge timer (Command 17)."""
     vehicle_id = call.data["vehicle_id"]
     start_time = call.data["start_time"]
     enabled = call.data.get("enabled", True)
-
     coordinator = _get_coordinator(hass, vehicle_id)
-    if not coordinator:
-        _LOGGER.error("Vehicle %s not found", vehicle_id)
+
+    if not enabled:
+        _LOGGER.info("Disabling charge timer for %s", vehicle_id)
+        await coordinator.async_send_command("17,0", "charge timer")
         return
 
-    if not coordinator.ovms_client:
-        _LOGGER.error("OVMS Protocol client not available for vehicle %s", vehicle_id)
-        return
-
-    try:
-        # Command 17 is for charge timer
-        # Format varies by vehicle, common format is mode,start_hour,start_min
-        if enabled:
-            parts = start_time.split(":")
-            if len(parts) == 2:
-                hour = int(parts[0])
-                minute = int(parts[1])
-                _LOGGER.info("Setting charge timer for %s to %s", vehicle_id, start_time)
-                result = await coordinator.async_send_command(
-                    f"17,1,{hour},{minute}"
-                )
-                if not result:
-                    _LOGGER.error("Failed to set charge timer for %s", vehicle_id)
-            else:
-                _LOGGER.error("Invalid time format: %s (expected HH:MM)", start_time)
-        else:
-            _LOGGER.info("Disabling charge timer for %s", vehicle_id)
-            result = await coordinator.async_send_command("17,0")
-            if not result:
-                _LOGGER.error("Failed to disable charge timer for %s", vehicle_id)
-    except Exception as err:
-        _LOGGER.error("Failed to set charge timer for %s: %s", vehicle_id, err)
+    # Format varies by vehicle, common format is mode,start_hour,start_min
+    parts = start_time.split(":")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        raise ServiceValidationError(
+            f"Invalid time format: {start_time} (expected HH:MM)"
+        )
+    hour, minute = int(parts[0]), int(parts[1])
+    _LOGGER.info("Setting charge timer for %s to %s", vehicle_id, start_time)
+    await coordinator.async_send_command(f"17,1,{hour},{minute}", "charge timer")
 
 
 async def async_wakeup_subsystem(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Handle wakeup_subsystem service call.
-
-    Wakes a specific vehicle subsystem using Command 19.
-
-    Args:
-        hass: Home Assistant instance
-        call: Service call data containing vehicle_id and subsystem
-    """
+    """Wake a specific vehicle subsystem (Command 19)."""
     vehicle_id = call.data["vehicle_id"]
     subsystem = call.data["subsystem"]
-
     coordinator = _get_coordinator(hass, vehicle_id)
-    if not coordinator:
-        _LOGGER.error("Vehicle %s not found", vehicle_id)
-        return
-
-    if not coordinator.ovms_client:
-        _LOGGER.error("OVMS Protocol client not available for vehicle %s", vehicle_id)
-        return
-
-    try:
-        # Command 19 is for waking specific subsystems
-        _LOGGER.info("Waking subsystem %d for %s", subsystem, vehicle_id)
-        result = await coordinator.async_send_command(f"19,{subsystem}")
-        if not result:
-            _LOGGER.error("Failed to wake subsystem for %s", vehicle_id)
-    except Exception as err:
-        _LOGGER.error("Failed to wake subsystem for %s: %s", vehicle_id, err)
+    _LOGGER.info("Waking subsystem %d for %s", subsystem, vehicle_id)
+    await coordinator.async_send_command(f"19,{subsystem}", f"wake-up {subsystem}")
 
 
 async def async_tpms_map_wheel(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Handle tpms_map_wheel service call.
-
-    Maps a TPMS sensor to a wheel position using Command 7.
-
-    Args:
-        hass: Home Assistant instance
-        call: Service call data containing vehicle_id, wheel, and sensor_id
-    """
+    """Map a TPMS sensor to a wheel position (Command 7)."""
     vehicle_id = call.data["vehicle_id"]
     wheel = call.data["wheel"]
     sensor_id = call.data["sensor_id"]
-
     coordinator = _get_coordinator(hass, vehicle_id)
-    if not coordinator:
-        _LOGGER.error("Vehicle %s not found", vehicle_id)
-        return
-
-    if not coordinator.ovms_client:
-        _LOGGER.error("OVMS Protocol client not available for vehicle %s", vehicle_id)
-        return
-
-    try:
-        # TPMS mapping uses generic command
-        _LOGGER.info("Mapping TPMS sensor %s to wheel %s for %s", sensor_id, wheel, vehicle_id)
-        result = await coordinator.async_send_command(f"7,tpms map {wheel} {sensor_id}")
-        if not result:
-            _LOGGER.error("Failed to map TPMS for %s", vehicle_id)
-    except Exception as err:
-        _LOGGER.error("Failed to map TPMS for %s: %s", vehicle_id, err)
+    _LOGGER.info(
+        "Mapping TPMS sensor %s to wheel %s for %s", sensor_id, wheel, vehicle_id
+    )
+    await coordinator.async_send_command(f"7,tpms map {wheel} {sensor_id}", "TPMS map")
 
 
 async def async_get_feature(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Handle get_feature service call.
-
-    Gets a module feature using Command 1.
-
-    Args:
-        hass: Home Assistant instance
-        call: Service call data containing vehicle_id and feature_number
-    """
+    """Request the module features (Command 1)."""
     vehicle_id = call.data["vehicle_id"]
     feature_number = call.data["feature_number"]
-
     coordinator = _get_coordinator(hass, vehicle_id)
-    if not coordinator:
-        _LOGGER.error("Vehicle %s not found", vehicle_id)
-        return
-
-    if not coordinator.ovms_client:
-        _LOGGER.error("OVMS Protocol client not available for vehicle %s", vehicle_id)
-        return
-
-    try:
-        # Command 1 is for getting features
-        _LOGGER.info("Getting feature %d for %s", feature_number, vehicle_id)
-        result = await coordinator.async_send_command("1")
-        if not result:
-            _LOGGER.error("Failed to get feature for %s", vehicle_id)
-    except Exception as err:
-        _LOGGER.error("Failed to get feature for %s: %s", vehicle_id, err)
+    _LOGGER.info("Getting feature %d for %s", feature_number, vehicle_id)
+    await coordinator.async_send_command("1", "get feature")
 
 
 async def async_set_feature(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Handle set_feature service call.
-
-    Sets a module feature using Command 2.
-
-    Args:
-        hass: Home Assistant instance
-        call: Service call data containing vehicle_id, feature_number, and value
-    """
+    """Set a module feature (Command 2)."""
     vehicle_id = call.data["vehicle_id"]
     feature_number = call.data["feature_number"]
     value = call.data.get("value", "")
-
     coordinator = _get_coordinator(hass, vehicle_id)
-    if not coordinator:
-        _LOGGER.error("Vehicle %s not found", vehicle_id)
-        return
-
-    if not coordinator.ovms_client:
-        _LOGGER.error("OVMS Protocol client not available for vehicle %s", vehicle_id)
-        return
-
-    try:
-        # Command 2 is for setting features
-        _LOGGER.info("Setting feature %d to %s for %s", feature_number, value, vehicle_id)
-        result = await coordinator.async_send_command(f"2,{feature_number},{value}")
-        if not result:
-            _LOGGER.error("Failed to set feature for %s", vehicle_id)
-    except Exception as err:
-        _LOGGER.error("Failed to set feature for %s: %s", vehicle_id, err)
+    _LOGGER.info("Setting feature %d to %s for %s", feature_number, value, vehicle_id)
+    await coordinator.async_send_command(
+        f"2,{feature_number},{value}", f"set feature {feature_number}"
+    )
 
 
 async def async_get_parameter(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Handle get_parameter service call.
-
-    Gets a module parameter using Command 3.
-
-    Args:
-        hass: Home Assistant instance
-        call: Service call data containing vehicle_id and parameter_number
-    """
+    """Request the module parameters (Command 3)."""
     vehicle_id = call.data["vehicle_id"]
     parameter_number = call.data["parameter_number"]
-
     coordinator = _get_coordinator(hass, vehicle_id)
-    if not coordinator:
-        _LOGGER.error("Vehicle %s not found", vehicle_id)
-        return
-
-    if not coordinator.ovms_client:
-        _LOGGER.error("OVMS Protocol client not available for vehicle %s", vehicle_id)
-        return
-
-    try:
-        # Command 3 is for getting parameters
-        _LOGGER.info("Getting parameter %d for %s", parameter_number, vehicle_id)
-        result = await coordinator.async_send_command("3")
-        if not result:
-            _LOGGER.error("Failed to get parameter for %s", vehicle_id)
-    except Exception as err:
-        _LOGGER.error("Failed to get parameter for %s: %s", vehicle_id, err)
+    _LOGGER.info("Getting parameter %d for %s", parameter_number, vehicle_id)
+    await coordinator.async_send_command("3", "get parameter")
 
 
 async def async_set_parameter(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Handle set_parameter service call.
-
-    Sets a module parameter using Command 4.
-
-    Args:
-        hass: Home Assistant instance
-        call: Service call data containing vehicle_id, parameter_number, and value
-    """
+    """Set a module parameter (Command 4)."""
     vehicle_id = call.data["vehicle_id"]
     parameter_number = call.data["parameter_number"]
     value = call.data.get("value", "")
-
     coordinator = _get_coordinator(hass, vehicle_id)
-    if not coordinator:
-        _LOGGER.error("Vehicle %s not found", vehicle_id)
-        return
+    _LOGGER.info(
+        "Setting parameter %d to %s for %s", parameter_number, value, vehicle_id
+    )
+    await coordinator.async_send_command(
+        f"4,{parameter_number},{value}", f"set parameter {parameter_number}"
+    )
 
-    if not coordinator.ovms_client:
-        _LOGGER.error("OVMS Protocol client not available for vehicle %s", vehicle_id)
-        return
 
-    try:
-        # Command 4 is for setting parameters
-        _LOGGER.info("Setting parameter %d to %s for %s", parameter_number, value, vehicle_id)
-        result = await coordinator.async_send_command(f"4,{parameter_number},{value}")
-        if not result:
-            _LOGGER.error("Failed to set parameter for %s", vehicle_id)
-    except Exception as err:
-        _LOGGER.error("Failed to set parameter for %s: %s", vehicle_id, err)
+SERVICES = (
+    (SERVICE_SEND_COMMAND, async_send_command, SEND_COMMAND_SCHEMA),
+    (SERVICE_SEND_SMS, async_send_sms, SEND_SMS_SCHEMA),
+    (SERVICE_SET_CHARGE_TIMER, async_set_charge_timer, SET_CHARGE_TIMER_SCHEMA),
+    (SERVICE_WAKEUP_SUBSYSTEM, async_wakeup_subsystem, WAKEUP_SUBSYSTEM_SCHEMA),
+    (SERVICE_TPMS_MAP_WHEEL, async_tpms_map_wheel, TPMS_MAP_WHEEL_SCHEMA),
+    (SERVICE_GET_FEATURE, async_get_feature, FEATURE_SCHEMA),
+    (SERVICE_SET_FEATURE, async_set_feature, FEATURE_SCHEMA),
+    (SERVICE_GET_PARAMETER, async_get_parameter, PARAMETER_SCHEMA),
+    (SERVICE_SET_PARAMETER, async_set_parameter, PARAMETER_SCHEMA),
+)
 
 
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Set up OVMS services."""
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SEND_COMMAND,
-        lambda call: async_send_command(hass, call),
-        schema=SEND_COMMAND_SCHEMA,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SEND_SMS,
-        lambda call: async_send_sms(hass, call),
-        schema=SEND_SMS_SCHEMA,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SET_CHARGE_TIMER,
-        lambda call: async_set_charge_timer(hass, call),
-        schema=SET_CHARGE_TIMER_SCHEMA,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_WAKEUP_SUBSYSTEM,
-        lambda call: async_wakeup_subsystem(hass, call),
-        schema=WAKEUP_SUBSYSTEM_SCHEMA,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_TPMS_MAP_WHEEL,
-        lambda call: async_tpms_map_wheel(hass, call),
-        schema=TPMS_MAP_WHEEL_SCHEMA,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_FEATURE,
-        lambda call: async_get_feature(hass, call),
-        schema=FEATURE_SCHEMA,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SET_FEATURE,
-        lambda call: async_set_feature(hass, call),
-        schema=FEATURE_SCHEMA,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_GET_PARAMETER,
-        lambda call: async_get_parameter(hass, call),
-        schema=PARAMETER_SCHEMA,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SET_PARAMETER,
-        lambda call: async_set_parameter(hass, call),
-        schema=PARAMETER_SCHEMA,
-    )
+    # functools.partial keeps the handler a coroutine function for HA. A lambda
+    # would be run as an executor job and its coroutine never awaited.
+    for name, handler, schema in SERVICES:
+        hass.services.async_register(
+            DOMAIN, name, partial(handler, hass), schema=schema
+        )
 
     _LOGGER.info("OVMS services registered")
 

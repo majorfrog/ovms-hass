@@ -101,6 +101,14 @@ class OVMSConnectionError(Exception):
     """Raised when unable to connect to OVMS server."""
 
 
+class OVMSCommandNotSent(OVMSConnectionError):
+    """Raised when a command was not written to the server at all (safe to retry)."""
+
+
+class OVMSConnectionLost(OVMSConnectionError):
+    """Raised when the connection failed after a command may have been written."""
+
+
 class OVMSAuthenticationError(Exception):
     """Raised when authentication with OVMS server fails."""
 

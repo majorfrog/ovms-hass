@@ -39,6 +39,7 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfTime,
 )
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -159,19 +160,10 @@ class ACOnButton(OVMSEntity, ButtonEntity):
         """Handle button press - send AC ON command to vehicle."""
         _LOGGER.debug("AC ON button pressed for vehicle %s", self.vehicle_id)
 
-        if not self.coordinator.ovms_client:
-            _LOGGER.error("OVMS Protocol client not available, cannot turn on AC")
-            return
-
-        try:
-            _LOGGER.debug("Sending AC ON command (26,1)")
-            result = await self.coordinator.async_send_command("26,1")
-            if result:
-                _LOGGER.info("AC ON command sent successfully")
-            else:
-                _LOGGER.error("Failed to send AC ON command")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to turn on AC: %s", err)
+        _LOGGER.debug("Sending AC ON command (26,1)")
+        await self.coordinator.async_send_command("26,1", "AC ON")
+        _LOGGER.info("AC ON command sent successfully")
+        self.coordinator.async_schedule_hvac_followup()
 
 
 class ACOffButton(OVMSEntity, ButtonEntity):
@@ -206,19 +198,10 @@ class ACOffButton(OVMSEntity, ButtonEntity):
         """Handle button press - send AC OFF command to vehicle."""
         _LOGGER.debug("AC OFF button pressed for vehicle %s", self.vehicle_id)
 
-        if not self.coordinator.ovms_client:
-            _LOGGER.error("OVMS Protocol client not available, cannot turn off AC")
-            return
-
-        try:
-            _LOGGER.debug("Sending AC OFF command (26,0)")
-            result = await self.coordinator.async_send_command("26,0")
-            if result:
-                _LOGGER.info("AC OFF command sent successfully")
-            else:
-                _LOGGER.error("Failed to send AC OFF command")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to turn off AC: %s", err)
+        _LOGGER.debug("Sending AC OFF command (26,0)")
+        await self.coordinator.async_send_command("26,0", "AC OFF")
+        _LOGGER.info("AC OFF command sent successfully")
+        self.coordinator.async_schedule_hvac_followup()
 
 
 class AmbientTemperatureSensor(OVMSEntity, SensorEntity):
@@ -854,16 +837,7 @@ class DoorLockEntity(OVMSEntity, LockEntity):
         Args:
             **kwargs: Additional arguments
         """
-        if not self.coordinator.ovms_client:
-            _LOGGER.error("OVMS Protocol client not available, cannot lock vehicle")
-            return
-
-        try:
-            result = await self.coordinator.async_send_command("20")
-            if not result:
-                _LOGGER.error("Failed to lock vehicle")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to lock vehicle: %s", err)
+        await self.coordinator.async_send_command("20", "lock")
 
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the vehicle.
@@ -871,16 +845,7 @@ class DoorLockEntity(OVMSEntity, LockEntity):
         Args:
             **kwargs: Additional arguments
         """
-        if not self.coordinator.ovms_client:
-            _LOGGER.error("OVMS Protocol client not available, cannot unlock vehicle")
-            return
-
-        try:
-            result = await self.coordinator.async_send_command("22")
-            if not result:
-                _LOGGER.error("Failed to unlock vehicle")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to unlock vehicle: %s", err)
+        await self.coordinator.async_send_command("22", "unlock")
 
 
 class CooldownSwitch(OVMSEntity, SwitchEntity):
@@ -911,18 +876,7 @@ class CooldownSwitch(OVMSEntity, SwitchEntity):
         Args:
             **kwargs: Additional arguments
         """
-        if not self.coordinator.ovms_client:
-            _LOGGER.error(
-                "OVMS Protocol client not available, cannot activate cooldown"
-            )
-            return
-
-        try:
-            result = await self.coordinator.async_send_command("25")
-            if not result:
-                _LOGGER.error("Failed to activate cooldown")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to activate cooldown: %s", err)
+        await self.coordinator.async_send_command("25", "cooldown")
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Deactivate cooldown (no direct command available).
@@ -931,7 +885,7 @@ class CooldownSwitch(OVMSEntity, SwitchEntity):
             **kwargs: Additional arguments
         """
         # OVMS doesn't provide a direct cooldown OFF command
-        _LOGGER.debug("Cooldown OFF not supported by OVMS")
+        raise ServiceValidationError("Cooldown cannot be turned off")
 
 
 class ValetModeSwitch(OVMSEntity, SwitchEntity):
@@ -962,18 +916,7 @@ class ValetModeSwitch(OVMSEntity, SwitchEntity):
         Args:
             **kwargs: Additional arguments
         """
-        if not self.coordinator.ovms_client:
-            _LOGGER.error(
-                "OVMS Protocol client not available, cannot enable valet mode"
-            )
-            return
-
-        try:
-            result = await self.coordinator.async_send_command("21")
-            if not result:
-                _LOGGER.error("Failed to enable valet mode")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to enable valet mode: %s", err)
+        await self.coordinator.async_send_command("21", "valet mode on")
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable valet mode.
@@ -981,18 +924,7 @@ class ValetModeSwitch(OVMSEntity, SwitchEntity):
         Args:
             **kwargs: Additional arguments
         """
-        if not self.coordinator.ovms_client:
-            _LOGGER.error(
-                "OVMS Protocol client not available, cannot disable valet mode"
-            )
-            return
-
-        try:
-            result = await self.coordinator.async_send_command("23")
-            if not result:
-                _LOGGER.error("Failed to disable valet mode")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to disable valet mode: %s", err)
+        await self.coordinator.async_send_command("23", "valet mode off")
 
 
 class ChargeLimitNumber(OVMSEntity, NumberEntity):
@@ -1028,17 +960,10 @@ class ChargeLimitNumber(OVMSEntity, NumberEntity):
         Args:
             value: Target SOC percentage
         """
-        if not self.coordinator.ovms_client:
-            _LOGGER.error("OVMS Protocol client not available, cannot set charge limit")
-            return
-
-        try:
-            soc_int = int(value)
-            result = await self.coordinator.async_send_command(f"16,{soc_int}")
-            if not result:
-                _LOGGER.error("Failed to set charge limit")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to set charge limit: %s", err)
+        soc_int = int(value)
+        await self.coordinator.async_send_command(
+            f"16,{soc_int}", f"charge limit {soc_int}%"
+        )
 
 
 class ChargingCurrentNumber(OVMSEntity, NumberEntity):
@@ -1074,19 +999,10 @@ class ChargingCurrentNumber(OVMSEntity, NumberEntity):
         Args:
             value: Charging current in amperes
         """
-        if not self.coordinator.ovms_client:
-            _LOGGER.error(
-                "OVMS Protocol client not available, cannot set charging current"
-            )
-            return
-
-        try:
-            amps_int = int(value)
-            result = await self.coordinator.async_send_command(f"15,{amps_int}")
-            if not result:
-                _LOGGER.error("Failed to set charging current")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to set charging current: %s", err)
+        amps_int = int(value)
+        await self.coordinator.async_send_command(
+            f"15,{amps_int}", f"charging current {amps_int} A"
+        )
 
 
 class GPSStreamingIntervalNumber(OVMSEntity, NumberEntity):
@@ -1129,22 +1045,14 @@ class GPSStreamingIntervalNumber(OVMSEntity, NumberEntity):
         Args:
             value: Streaming interval in seconds
         """
-        if not self.coordinator.ovms_client:
-            _LOGGER.error("OVMS Protocol client not available, cannot set GPS interval")
-            return
-
-        try:
-            interval_int = int(value)
-            # Command 2 format: "2,<feature_slot>,<value>"
-            result = await self.coordinator.async_send_command(f"2,8,{interval_int}")
-            if not result:
-                _LOGGER.error("Failed to set GPS streaming interval")
-                return
-            # Update local cache
-            features = self.coordinator.data.get("features", {})
-            features[8] = str(interval_int)
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to set GPS streaming interval: %s", err)
+        interval_int = int(value)
+        # Command 2 format: "2,<feature_slot>,<value>"
+        await self.coordinator.async_send_command(
+            f"2,8,{interval_int}", f"GPS interval {interval_int} s"
+        )
+        # Update local cache
+        features = self.coordinator.data.get("features", {})
+        features[8] = str(interval_int)
 
 
 class RefreshButton(OVMSEntity, ButtonEntity):
@@ -1189,21 +1097,11 @@ class WakeUpButton(OVMSEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press - send wake-up command to vehicle."""
-        if not self.coordinator.ovms_client:
-            _LOGGER.error("OVMS Protocol client not available, cannot wake up vehicle")
-            return
-
-        try:
-            _LOGGER.info("Sending wake-up command to vehicle %s", self.vehicle_id)
-            result = await self.coordinator.async_send_command("18")
-            if not result:
-                _LOGGER.error("Failed to wake up vehicle")
-                return
-            # Wait a moment for the vehicle to wake up before refreshing
-            await asyncio.sleep(2)
-            await self.coordinator.async_request_refresh()
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to wake up vehicle: %s", err)
+        _LOGGER.info("Sending wake-up command to vehicle %s", self.vehicle_id)
+        await self.coordinator.async_send_command("18", "wake-up")
+        # Wait a moment for the vehicle to wake up before refreshing
+        await asyncio.sleep(2)
+        await self.coordinator.async_request_refresh()
 
 
 class HomeLinkButton(OVMSEntity, ButtonEntity):
@@ -1227,25 +1125,14 @@ class HomeLinkButton(OVMSEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press - activate HomeLink."""
-        if not self.coordinator.ovms_client:
-            _LOGGER.error(
-                "OVMS Protocol client not available, cannot activate HomeLink"
-            )
-            return
-
-        try:
-            _LOGGER.info(
-                "Activating HomeLink %d for vehicle %s",
-                self.button_number + 1,
-                self.vehicle_id,
-            )
-            result = await self.coordinator.async_send_command(
-                f"24,{self.button_number}"
-            )
-            if not result:
-                _LOGGER.error("Failed to activate HomeLink")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to activate HomeLink: %s", err)
+        _LOGGER.info(
+            "Activating HomeLink %d for vehicle %s",
+            self.button_number + 1,
+            self.vehicle_id,
+        )
+        await self.coordinator.async_send_command(
+            f"24,{self.button_number}", f"HomeLink {self.button_number + 1}"
+        )
 
 
 class ModuleResetButton(OVMSEntity, ButtonEntity):
@@ -1267,20 +1154,10 @@ class ModuleResetButton(OVMSEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press - reset OVMS module."""
-        if not self.coordinator.ovms_client:
-            _LOGGER.error("OVMS Protocol client not available, cannot reset module")
-            return
-
-        try:
-            _LOGGER.info("Resetting OVMS module for vehicle %s", self.vehicle_id)
-            result = await self.coordinator.async_send_command("5")
-            if not result:
-                _LOGGER.error("Failed to reset module")
-                return
-            # Module will restart, don't refresh immediately
-            _LOGGER.info("Module reset command sent, module will restart")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to reset module: %s", err)
+        _LOGGER.info("Resetting OVMS module for vehicle %s", self.vehicle_id)
+        await self.coordinator.async_send_command("5", "module reset")
+        # Module will restart, don't refresh immediately
+        _LOGGER.info("Module reset command sent, module will restart")
 
 
 class VehicleTracker(OVMSEntity, TrackerEntity):
@@ -2194,14 +2071,5 @@ class TPMSResetButton(OVMSEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press - reset TPMS mapping."""
-        if not self.coordinator.ovms_client:
-            _LOGGER.error("OVMS Protocol client not available, cannot reset TPMS")
-            return
-
-        try:
-            _LOGGER.info("Resetting TPMS mapping for vehicle %s", self.vehicle_id)
-            result = await self.coordinator.async_send_command("7,tpms map reset")
-            if not result:
-                _LOGGER.error("Failed to reset TPMS")
-        except (ValueError, KeyError, RuntimeError) as err:
-            _LOGGER.error("Failed to reset TPMS: %s", err)
+        _LOGGER.info("Resetting TPMS mapping for vehicle %s", self.vehicle_id)
+        await self.coordinator.async_send_command("7,tpms map reset", "TPMS auto-learn")

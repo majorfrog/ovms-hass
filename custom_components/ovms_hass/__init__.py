@@ -221,23 +221,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             use_tls=True,
         )
 
-        try:
-            _LOGGER.debug("Connecting Protocol v2 client for vehicle %s", vehicle_id)
-            await protocol_client.connect()
-            coordinator.ovms_client = protocol_client
-            # Start background reader loop and ping keepalive
-            # This keeps the TCP connection alive and processes incoming messages
-            protocol_client.start_background_reader()
-            _LOGGER.info(
-                "Protocol v2 client connected with background reader for vehicle %s",
-                vehicle_id,
-            )
-        except (OVMSConnectionError, OVMSAPIError) as err:
-            _LOGGER.warning(
-                "Failed to connect Protocol v2 client for commands: %s", err
-            )
-        except Exception as err:
-            _LOGGER.exception("Unexpected error connecting Protocol v2 client: %s", err)
+        await _async_connect_protocol(coordinator, protocol_client)
 
         # Initial data fetch (don't fail if it errors - vehicle may not have data yet)
         try:
@@ -266,6 +250,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
     else:
         return True
+
+
+async def _async_connect_protocol(
+    coordinator: OVMSDataCoordinator, protocol_client: OVMSProtocolClient
+) -> None:
+    """Attach the Protocol v2 client to the coordinator and connect it.
+
+    The client is attached before connecting, so a failed first connect still
+    leaves a client that reconnects in the background and on the next command.
+    """
+    coordinator.ovms_client = protocol_client
+    protocol_client.on_protocol_data = coordinator.async_handle_protocol_data
+    try:
+        _LOGGER.debug(
+            "Connecting Protocol v2 client for vehicle %s", coordinator.vehicle_id
+        )
+        await protocol_client.connect()
+        # Start background reader loop and ping keepalive
+        # This keeps the TCP connection alive and processes incoming messages
+        protocol_client.start_background_reader()
+        _LOGGER.info(
+            "Protocol v2 client connected with background reader for vehicle %s",
+            coordinator.vehicle_id,
+        )
+    except (OVMSConnectionError, OVMSAPIError) as err:
+        _LOGGER.warning(
+            "Failed to connect Protocol v2 client for commands, retrying in background: %s",
+            err,
+        )
+        protocol_client.start_reconnect()
+    except Exception as err:
+        _LOGGER.exception("Unexpected error connecting Protocol v2 client: %s", err)
+        protocol_client.start_reconnect()
 
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -312,6 +329,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             # Clean up protocol client first
             coordinator = entry.runtime_data.get("coordinator")
+            if coordinator:
+                coordinator.async_cancel_hvac_followup()
             if coordinator and coordinator.ovms_client:
                 try:
                     await coordinator.ovms_client.disconnect()

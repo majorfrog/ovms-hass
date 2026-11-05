@@ -1,0 +1,187 @@
+"""Tests for the OVMS Protocol v2 command round-trip."""
+
+from __future__ import annotations
+
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from custom_components.ovms_hass import coordinator as coordinator_module
+from custom_components.ovms_hass.api import OVMSCommandNotSent, OVMSConnectionLost
+from custom_components.ovms_hass.coordinator import RC4, OVMSProtocolClient
+
+
+def _command_code(data: bytes) -> str:
+    """Return the command code from a plain-text written message."""
+    # "MP-0 C26,1\r\n" -> "26"
+    return data.decode()[6:].split(",", 1)[0]
+
+
+def make_client() -> tuple[OVMSProtocolClient, MagicMock]:
+    """Return a connected client with a fake socket writer."""
+    client = OVMSProtocolClient("h", "u", "p", "APA123")
+    client.connected = True
+    client.authenticated = True
+    client._tx_cipher = RC4(b"k")
+    # Skip encryption so tests can read what was written.
+    client._encrypt_message = lambda message: message
+    writer = MagicMock()
+    writer.write = MagicMock()
+    writer.drain = AsyncMock()
+    writer.close = MagicMock()
+    writer.wait_closed = AsyncMock()
+    writer.is_closing = MagicMock(return_value=False)
+    client._writer = writer
+    return client, writer
+
+
+async def test_reply_before_wait_is_not_lost() -> None:
+    """A reply handled while the command is still being written counts."""
+    client, writer = make_client()
+    writer.write.side_effect = lambda _data: client._handle_command_response("26,0,")
+
+    result = await client.async_command("26,1", 1)
+
+    assert result == {"code": 26, "result": 0, "message": ""}
+
+
+async def test_reply_with_other_code_is_ignored() -> None:
+    """A reply for another command code does not ack this command."""
+    client, writer = make_client()
+    loop = asyncio.get_running_loop()
+
+    def reply(_data: bytes) -> None:
+        client._handle_command_response("7,0,yes")
+        loop.call_later(0.05, client._handle_command_response, "26,0,")
+
+    writer.write.side_effect = reply
+
+    result = await client.async_command("26,1", 1)
+
+    assert result is not None
+    assert result["code"] == 26
+
+
+async def test_timeout_returns_none() -> None:
+    """No reply within the timeout gives None."""
+    client, _writer = make_client()
+
+    assert await client.async_command("26,1", 0.1) is None
+
+
+async def test_concurrent_commands_are_serialized() -> None:
+    """Two concurrent commands each get their own reply, one after the other."""
+    client, writer = make_client()
+    loop = asyncio.get_running_loop()
+    events: list[str] = []
+
+    def reply(data: bytes) -> None:
+        code = _command_code(data)
+        events.append(f"write {code}")
+
+        def answer() -> None:
+            events.append(f"reply {code}")
+            client._handle_command_response(f"{code},0,ok{code}")
+
+        loop.call_later(0.05, answer)
+
+    writer.write.side_effect = reply
+
+    first, second = await asyncio.gather(
+        client.async_command("26,1", 1),
+        client.async_command("7,metrics get v.e.hvac", 1),
+    )
+
+    assert first == {"code": 26, "result": 0, "message": "ok26"}
+    assert second == {"code": 7, "result": 0, "message": "ok7"}
+    assert events == ["write 26", "reply 26", "write 7", "reply 7"]
+
+
+async def test_not_connected_raises_not_sent() -> None:
+    """Nothing is written when the client is not connected."""
+    client, writer = make_client()
+    client.connected = False
+
+    with pytest.raises(OVMSCommandNotSent):
+        await client.async_command("26,1", 1)
+    writer.write.assert_not_called()
+
+
+async def test_write_failure_raises_not_sent() -> None:
+    """A failing write means nothing reached the server."""
+    client, writer = make_client()
+    writer.write.side_effect = OSError("broken pipe")
+
+    with pytest.raises(OVMSCommandNotSent):
+        await client.async_command("26,1", 1)
+
+
+async def test_drain_failure_raises_connection_lost() -> None:
+    """A failing drain may have delivered the bytes."""
+    client, writer = make_client()
+    writer.drain.side_effect = OSError("reset")
+
+    with pytest.raises(OVMSConnectionLost):
+        await client.async_command("26,1", 1)
+
+
+async def test_drain_hang_raises_connection_lost() -> None:
+    """A drain that never returns is bounded by SEND_TIMEOUT."""
+    client, writer = make_client()
+
+    async def hang() -> None:
+        await asyncio.Event().wait()
+
+    writer.drain.side_effect = hang
+
+    with (
+        patch.object(coordinator_module, "SEND_TIMEOUT", 0.1),
+        pytest.raises(OVMSConnectionLost),
+    ):
+        await client.async_command("26,1", 5)
+
+
+async def test_disconnect_during_wait_raises_connection_lost() -> None:
+    """A disconnect while waiting fails at once instead of timing out."""
+    client, _writer = make_client()
+    loop = asyncio.get_running_loop()
+    loop.call_later(
+        0.05, lambda: loop.create_task(client.disconnect(intentional=False))
+    )
+
+    start = loop.time()
+    with pytest.raises(OVMSConnectionLost):
+        await client.async_command("26,1", 1)
+    assert loop.time() - start < 0.5
+
+
+async def test_timeout_marks_connection_down() -> None:
+    """After a missing reply the next command must not reuse the socket."""
+    client, _writer = make_client()
+
+    assert await client.async_command("26,1", 0.05) is None
+    assert client.connected is False
+
+
+async def test_closing_writer_raises_not_sent() -> None:
+    """A transport that is already closing drops writes: nothing was sent."""
+    client, writer = make_client()
+    writer.is_closing.return_value = True
+
+    with pytest.raises(OVMSCommandNotSent):
+        await client.async_command("26,1", 1)
+    writer.write.assert_not_called()
+
+
+async def test_ping_failure_starts_reconnect() -> None:
+    """A failed ping starts the background reconnect."""
+    client, writer = make_client()
+    writer.drain.side_effect = OSError("reset")
+    client.start_reconnect = MagicMock()
+
+    with patch.object(coordinator_module, "PING_INTERVAL", 0):
+        await asyncio.wait_for(client._ping_loop(), 1)
+
+    assert client.connected is False
+    client.start_reconnect.assert_called_once()

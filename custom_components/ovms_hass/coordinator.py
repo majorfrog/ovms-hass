@@ -17,19 +17,43 @@ import logging
 import ssl
 from contextlib import suppress
 from datetime import timedelta
+from collections.abc import Callable
 from typing import Any
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import OVMSApiClient, OVMSAPIError, OVMSConnectionError
+from .api import (
+    OVMSApiClient,
+    OVMSAPIError,
+    OVMSCommandNotSent,
+    OVMSConnectionError,
+    OVMSConnectionLost,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL = 300  # 5 minutes
 COMMAND_TIMEOUT = 10  # seconds
+SEND_TIMEOUT = 5  # seconds allowed for flushing a command to the socket
 PING_INTERVAL = 120  # 2 minutes
 RECONNECT_DELAY = 3  # seconds before reconnect attempt
+
+# Seconds after AC ON/OFF at which v.e.hvac is queried
+HVAC_FOLLOWUP_DELAYS = (15, 60)
+# Command 7 runs a module shell command; its output comes back in the reply
+HVAC_QUERY_COMMAND = "7,metrics get v.e.hvac"
+_HVAC_TRUE = {"yes", "1", "true", "on"}
+_HVAC_FALSE = {"no", "0", "false", "off"}
+
+# Protocol v2 command result codes (0 = success)
+COMMAND_RESULT_REASONS = {1: "failed", 2: "not supported", 3: "not implemented"}
+
+
+class OVMSCommandError(HomeAssistantError):
+    """Raised when a command did not reach the car or was not accepted."""
 
 
 class OVMSDataCoordinator(DataUpdateCoordinator):
@@ -63,6 +87,8 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         self.api_client = api_client
         self.vehicle_id = vehicle_id
         self.ovms_client: OVMSProtocolClient | None = None
+        self._hvac_followup_unsubs: list[CALLBACK_TYPE] = []
+        self._hvac_query_task: asyncio.Task | None = None
         self.data: dict[str, Any] = {
             "vehicle_id": vehicle_id,
             "vehicle_name": vehicle_id,
@@ -150,6 +176,75 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         except OVMSAPIError as err:
             raise UpdateFailed(f"OVMS API error: {err}") from err
 
+    @callback
+    def async_handle_protocol_data(self, changed: dict[str, Any]) -> None:
+        """Merge pushed Protocol v2 values into the data and update entities now.
+
+        Uses async_update_listeners, not async_set_updated_data: the latter
+        reschedules the next poll, so frequent D/F messages would keep
+        postponing the REST refresh.
+        """
+        status = self.data.setdefault("status", {})
+        for key, value in changed.items():
+            if value is not None:
+                status[key] = value
+        self.async_update_listeners()
+
+    async def async_query_hvac(self) -> bool | None:
+        """Read v.e.hvac from the module and push it to the HVAC state.
+
+        Returns:
+            The HVAC state, or None if the reply could not be parsed
+
+        Raises:
+            OVMSCommandError: If the query was not sent or not acknowledged
+        """
+        response = await self.async_send_command(
+            HVAC_QUERY_COMMAND, "HVAC status query"
+        )
+        value = _parse_hvac_reply(response.get("message", ""))
+        if value is None:
+            _LOGGER.debug("Unrecognised v.e.hvac reply: %r", response.get("message"))
+            return None
+        # Through protocol_data, so the next REST poll keeps this value.
+        self.ovms_client.update_protocol_data({"hvac": value})
+        return value
+
+    @callback
+    def async_schedule_hvac_followup(self) -> None:
+        """Query v.e.hvac at each HVAC_FOLLOWUP_DELAYS after an AC command."""
+        self.async_cancel_hvac_followup()
+        for delay in HVAC_FOLLOWUP_DELAYS:
+            self._hvac_followup_unsubs.append(
+                async_call_later(self.hass, delay, self._async_hvac_followup_fire)
+            )
+
+    @callback
+    def _async_hvac_followup_fire(self, _now: Any) -> None:
+        """Start one follow-up query unless one is still running."""
+        if self._hvac_query_task and not self._hvac_query_task.done():
+            return
+        self._hvac_query_task = self.hass.async_create_background_task(
+            self._async_hvac_followup_query(), f"OVMS {self.vehicle_id} HVAC query"
+        )
+
+    async def _async_hvac_followup_query(self) -> None:
+        try:
+            value = await self.async_query_hvac()
+        except OVMSCommandError as err:
+            _LOGGER.warning("HVAC follow-up query failed: %s", err)
+            return
+        _LOGGER.debug("HVAC follow-up query: hvac=%s", value)
+
+    @callback
+    def async_cancel_hvac_followup(self) -> None:
+        """Cancel pending follow-up queries and one that is running."""
+        for unsub in self._hvac_followup_unsubs:
+            unsub()
+        self._hvac_followup_unsubs.clear()
+        if self._hvac_query_task and not self._hvac_query_task.done():
+            self._hvac_query_task.cancel()
+
     async def _fetch_features(self) -> dict[int, str]:
         """Fetch vehicle features via command 1.
 
@@ -192,106 +287,83 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
                 "v_btcs_connected": 0,
             }
 
-    async def async_send_command(self, command: str) -> bool:
-        """Send a command to the vehicle via Protocol v2.
+    async def async_send_command(
+        self, command: str, label: str | None = None
+    ) -> dict[str, Any]:
+        """Send a command to the vehicle and return the car's acknowledgement.
 
-        Ensures the connection is alive before sending, waits for the actual
-        command response (type 'c'), and reconnects if the connection is dead.
+        A command is only retried when nothing was written to the server.
+        Once it may have reached the car (missing ack, connection lost after
+        the write) it is never resent, so toggle-type commands such as
+        HomeLink cannot fire twice.
 
         Args:
             command: Command string (e.g., "26,1" for AC ON)
+            label: Short name used in log lines and error messages
 
         Returns:
-            True if command was sent and acknowledged successfully
-        """
-        _LOGGER.info("Coordinator: Attempting to send command: %s", command)
+            Reply dict with 'code', 'result' (0) and 'message'
 
-        if not self.ovms_client:
-            _LOGGER.error("Coordinator: Protocol v2 client not available")
-            return False
+        Raises:
+            OVMSCommandError: If the command was not sent, not acknowledged
+                or rejected
+        """
+        label = label or command
+        vid = self.vehicle_id
+        _LOGGER.info("Coordinator: Sending %s (%s)", label, command)
 
         for attempt in (1, 2):
-            # Ensure connection is alive, reconnect if needed
             if not await self._ensure_protocol_connection():
-                _LOGGER.error("Coordinator: Cannot establish Protocol v2 connection")
-                return False
-
-            _LOGGER.info(
-                "Coordinator: Protocol client status - connected=%s, authenticated=%s (attempt %d/2)",
-                self.ovms_client.connected,
-                getattr(self.ovms_client, "authenticated", "N/A"),
-                attempt,
-            )
+                _LOGGER.error("Coordinator: No Protocol v2 connection, %s not sent", label)
+                raise OVMSCommandError(
+                    f"{vid}: no connection to the OVMS server, {label} not sent"
+                )
 
             try:
-                timeout = asyncio.timeout(COMMAND_TIMEOUT)
-                async with timeout:
-                    _LOGGER.info("Coordinator: Calling ovms_client.send_command(%s)", command)
-                    await self.ovms_client.send_command(command)
-                    _LOGGER.info("Coordinator: Command sent, waiting for command response...")
-
-                    # Wait specifically for a command response (type 'c'),
-                    # skipping any buffered status/info messages
-                    response = await self.ovms_client.wait_for_command_response(
-                        timeout=COMMAND_TIMEOUT - 1
-                    )
-
-                    if response is not None:
-                        _LOGGER.info(
-                            "Coordinator: Command response: code=%s, result=%s, message=%s",
-                            response.get("code"),
-                            response.get("result"),
-                            response.get("message", ""),
-                        )
-                        if response.get("result") == 0:
-                            _LOGGER.info("Coordinator: Command executed successfully")
-                        else:
-                            _LOGGER.warning(
-                                "Coordinator: Command returned non-zero result: %s",
-                                response.get("result"),
-                            )
-                    else:
-                        _LOGGER.warning(
-                            "Coordinator: No command response received for: %s "
-                            "(command may still have been forwarded to vehicle)",
-                            command,
-                        )
-
-                    # Refresh data after command execution
-                    _LOGGER.debug("Coordinator: Triggering data refresh after command")
-                    await self.async_request_refresh()
-                    return True
-            except TimeoutError:
+                response = await self.ovms_client.async_command(
+                    command, COMMAND_TIMEOUT
+                )
+            except OVMSCommandNotSent as err:
                 _LOGGER.error(
-                    "Coordinator: Command timeout after %d seconds: %s (attempt %d/2)",
-                    COMMAND_TIMEOUT,
-                    command,
-                    attempt,
+                    "Coordinator: %s not sent on attempt %d/2: %s", label, attempt, err
                 )
-                # Connection may be dead - mark for reconnect.
-                _LOGGER.info("Coordinator: Marking connection for reconnect after timeout")
                 await self.ovms_client.disconnect(intentional=False)
-            except OVMSConnectionError as err:
-                _LOGGER.error(
-                    "Coordinator: Connection error sending command %s on attempt %d/2: %s",
-                    command,
-                    attempt,
-                    err,
-                )
-                # Connection is dead - reconnect before retry.
+                continue
+            except OVMSConnectionLost as err:
+                _LOGGER.error("Coordinator: Connection lost after sending %s: %s", label, err)
+                raise OVMSCommandError(
+                    f"{vid}: connection lost after sending {label}, "
+                    "it may not have reached the car"
+                ) from err
+
+            if response is None:
+                _LOGGER.error("Coordinator: %s was not acknowledged", label)
+                # Usually a half-open TCP connection: drop it and reconnect in
+                # the background so pushed data comes back without a command.
                 await self.ovms_client.disconnect(intentional=False)
-            except OVMSAPIError as err:
-                _LOGGER.error("Coordinator: API error sending command %s: %s", command, err)
-                return False
+                self.ovms_client.start_reconnect()
+                raise OVMSCommandError(f"{vid} did not acknowledge {label}")
 
-            if attempt == 1:
-                _LOGGER.info(
-                    "Coordinator: Retrying command after reconnect: %s",
-                    command,
-                )
+            _LOGGER.info(
+                "Coordinator: Command response: code=%s, result=%s, message=%s",
+                response.get("code"),
+                response.get("result"),
+                response.get("message", ""),
+            )
+            result = response.get("result")
+            if result != 0:
+                reason = COMMAND_RESULT_REASONS.get(result, f"result {result}")
+                if response.get("message"):
+                    reason = f"{reason}: {response['message']}"
+                _LOGGER.error("Coordinator: %s rejected (%s)", label, reason)
+                raise OVMSCommandError(f"{vid} rejected {label} ({reason})")
 
-        _LOGGER.error("Coordinator: Command failed after reconnect retry: %s", command)
-        return False
+            _LOGGER.info("Coordinator: %s acknowledged", label)
+            await self.async_request_refresh()
+            return response
+
+        _LOGGER.error("Coordinator: %s could not be sent after retry", label)
+        raise OVMSCommandError(f"{vid}: {label} could not be sent")
 
     async def _ensure_protocol_connection(self) -> bool:
         """Ensure the Protocol v2 TCP connection is alive, reconnecting if needed.
@@ -299,26 +371,50 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         Returns:
             True if connected and authenticated
         """
-        if not self.ovms_client:
+        client = self.ovms_client
+        if not client:
             return False
 
-        if self.ovms_client.connected and self.ovms_client.authenticated:
+        if client.connected and client.authenticated:
             return True
 
-        _LOGGER.info("Coordinator: Protocol v2 connection is down, attempting reconnect...")
-        try:
-            await self.ovms_client.disconnect(intentional=False)
-            await self.ovms_client.connect()
-            # Start background reader for the new connection
-            self.ovms_client.start_background_reader()
-            _LOGGER.info("Coordinator: Protocol v2 reconnected successfully")
-            return True
-        except (OVMSConnectionError, OVMSAPIError) as err:
-            _LOGGER.error("Coordinator: Failed to reconnect Protocol v2: %s", err)
+        if not client._auto_reconnect_enabled:
+            # Integration is unloading/unloaded: never open a new connection.
             return False
-        except Exception as err:
-            _LOGGER.exception("Coordinator: Unexpected error during reconnect: %s", err)
-            return False
+
+        async with client._reconnect_lock:
+            if client.connected and client.authenticated:
+                return True
+            _LOGGER.info("Coordinator: Protocol v2 connection is down, attempting reconnect...")
+            try:
+                await client.disconnect(intentional=False)
+                await client.connect()
+                client.start_background_reader()
+                _LOGGER.info("Coordinator: Protocol v2 reconnected successfully")
+                return True
+            except (OVMSConnectionError, OVMSAPIError) as err:
+                _LOGGER.error("Coordinator: Failed to reconnect Protocol v2: %s", err)
+            except Exception as err:
+                _LOGGER.exception("Coordinator: Unexpected error during reconnect: %s", err)
+        # The failed attempt cancelled any background loop; start it again.
+        client.start_reconnect()
+        return False
+
+
+def _parse_hvac_reply(message: str) -> bool | None:
+    """Parse the output of `metrics get v.e.hvac` (or `metrics list v.e.hvac`).
+
+    Accepts a bare value ("yes") or a "name value" line ("v.e.hvac   yes").
+    """
+    for line in message.splitlines():
+        tokens = line.split()
+        if len(tokens) == 1 or (len(tokens) >= 2 and tokens[0] == "v.e.hvac"):
+            token = tokens[-1].lower()
+            if token in _HVAC_TRUE:
+                return True
+            if token in _HVAC_FALSE:
+                return False
+    return None
 
 
 class RC4:
@@ -417,14 +513,20 @@ class OVMSProtocolClient:
         # Command response handling
         self._command_response: dict[str, Any] | None = None
         self._command_event: asyncio.Event = asyncio.Event()
-        # Lock to prevent concurrent command sends
+        # Lock held for a whole command round-trip (send + wait for reply)
         self._command_lock: asyncio.Lock = asyncio.Lock()
+        # Code of the command waiting for a reply, None when idle
+        self._pending_code: int | None = None
+        # Set when the connection drops while a command waits for its reply
+        self._connection_lost = False
         # Lock and task for automatic reconnect on unexpected disconnects
         self._reconnect_lock: asyncio.Lock = asyncio.Lock()
         self._reconnect_task: asyncio.Task | None = None
         self._auto_reconnect_enabled = True
         # Data parsed from Protocol v2 messages (F, D, etc.)
         self.protocol_data: dict[str, Any] = {}
+        # Called with the changed keys whenever protocol_data changes
+        self.on_protocol_data: Callable[[dict[str, Any]], None] | None = None
 
     async def connect(self) -> None:
         """Establish connection to OVMS server and authenticate.
@@ -629,8 +731,7 @@ class OVMSProtocolClient:
         self.authenticated = False
         self._tx_cipher = None
         self._rx_cipher = None
-        self._command_response = None
-        self._command_event.clear()
+        self._wake_pending_command()
         _LOGGER.debug("Disconnected from OVMS server")
 
     def start_background_reader(self) -> None:
@@ -740,10 +841,15 @@ class OVMSProtocolClient:
         _LOGGER.warning("Background reader: Connection lost, marking as disconnected")
         self.connected = False
         self.authenticated = False
+        self._wake_pending_command()
         await self._schedule_reconnect()
 
     async def _schedule_reconnect(self) -> None:
         """Schedule automatic reconnect after an unexpected disconnect."""
+        self.start_reconnect()
+
+    def start_reconnect(self) -> None:
+        """Start the background reconnect loop unless it is running or disabled."""
         if not self._auto_reconnect_enabled:
             _LOGGER.debug("Auto-reconnect disabled, not scheduling reconnect")
             return
@@ -799,8 +905,24 @@ class OVMSProtocolClient:
             "result": int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None,
             "message": parts[2] if len(parts) > 2 else "",
         }
+        if self._pending_code is None or response["code"] != self._pending_code:
+            _LOGGER.debug(
+                "Unmatched command response %s (waiting for %s)",
+                payload,
+                self._pending_code,
+            )
+            return
         self._command_response = response
         self._command_event.set()
+
+    def _wake_pending_command(self) -> None:
+        """Wake a command waiting for its reply because the connection dropped."""
+        self._command_response = None
+        if self._pending_code is not None:
+            self._connection_lost = True
+            self._command_event.set()
+        else:
+            self._command_event.clear()
 
     def _parse_firmware_message(self, payload: str) -> None:
         """Parse firmware message (Protocol v2 type F).
@@ -840,8 +962,27 @@ class OVMSProtocolClient:
             data["m_mdm_mode"] = parts[9]
 
         if data:
-            self.protocol_data.update(data)
             _LOGGER.debug("Parsed firmware data: %s", data)
+            self.update_protocol_data(data)
+
+    def update_protocol_data(self, data: dict[str, Any]) -> None:
+        """Merge parsed values and notify the callback about the ones that changed.
+
+        Runs inside the reader loop, so a failing callback is logged here and
+        never propagates (the loop would otherwise drop the connection).
+        """
+        changed = {
+            key: value
+            for key, value in data.items()
+            if key not in self.protocol_data or self.protocol_data[key] != value
+        }
+        self.protocol_data.update(data)
+        if not changed or self.on_protocol_data is None:
+            return
+        try:
+            self.on_protocol_data(changed)
+        except Exception:
+            _LOGGER.exception("Error handling pushed OVMS data %s", changed)
 
     def _parse_environment_message(self, payload: str) -> None:
         """Parse environment/doors message (Protocol v2 type D).
@@ -860,34 +1001,11 @@ class OVMSProtocolClient:
         if len(parts) > 17 and parts[17]:
             try:
                 doors5 = int(parts[17])
-                self.protocol_data["hvac"] = bool(doors5 & 0x80)
             except (ValueError, TypeError):
-                pass
-
-    async def wait_for_command_response(self, timeout: int = 10) -> dict[str, Any] | None:
-        """Wait for a command response from the background reader.
-
-        The background reader loop processes all incoming messages. When it
-        encounters a command response (type 'c'), it sets the event.
-        This method waits for that event.
-
-        Args:
-            timeout: Maximum seconds to wait for response
-
-        Returns:
-            Command response dict with 'code', 'result', 'message' keys,
-            or None if timeout
-        """
-        # Clear any previous response
-        self._command_event.clear()
-        self._command_response = None
-
-        try:
-            await asyncio.wait_for(self._command_event.wait(), timeout=timeout)
-            return self._command_response
-        except TimeoutError:
-            _LOGGER.debug("Timed out waiting for command response after %ds", timeout)
-            return None
+                return
+            hvac = bool(doors5 & 0x80)
+            _LOGGER.debug("D message: doors5=%s hvac=%s", doors5, hvac)
+            self.update_protocol_data({"hvac": hvac})
 
     async def _ping_loop(self) -> None:
         """Send periodic ping messages to keep the connection alive.
@@ -908,6 +1026,7 @@ class OVMSProtocolClient:
                     _LOGGER.warning("Ping failed, connection may be dead: %s", err)
                     self.connected = False
                     self.authenticated = False
+                    self.start_reconnect()
                     break
         except asyncio.CancelledError:
             _LOGGER.debug("Ping loop cancelled")
@@ -921,15 +1040,28 @@ class OVMSProtocolClient:
         Raises:
             OVMSConnectionError: If not connected or send fails
         """
+        self._write_encrypted(message)
+        await self._writer.drain()
+
+    def _write_encrypted(self, message: str) -> None:
+        """Encrypt a message and hand it to the socket writer.
+
+        Raises:
+            OVMSCommandNotSent: If nothing could be written
+        """
         if not self.connected or not self._writer:
-            raise OVMSConnectionError("Not connected to OVMS server")
+            raise OVMSCommandNotSent("Not connected to OVMS server")
         if not self._tx_cipher:
-            raise OVMSConnectionError("Not authenticated - no TX cipher")
+            raise OVMSCommandNotSent("Not authenticated - no TX cipher")
+        if self._writer.is_closing():
+            # asyncio drops writes on a closing transport without raising.
+            raise OVMSCommandNotSent("Connection is closing")
 
         encrypted = self._encrypt_message(message)
-        full_message = f"{encrypted}\r\n"
-        self._writer.write(full_message.encode("utf-8"))
-        await self._writer.drain()
+        try:
+            self._writer.write(f"{encrypted}\r\n".encode("utf-8"))
+        except Exception as err:
+            raise OVMSCommandNotSent(f"Write failed: {err}") from err
 
     def _encrypt_message(self, message: str) -> str:
         """Encrypt a message using RC4 and base64 encode.
@@ -966,55 +1098,60 @@ class OVMSProtocolClient:
         decrypted = self._rx_cipher.crypt(encrypted)
         return decrypted.decode("utf-8", errors="replace")
 
-    async def send_command(self, command: str) -> None:
-        """Send command to vehicle.
+    async def async_command(
+        self, command: str, timeout: float
+    ) -> dict[str, Any] | None:
+        """Send a command and wait for the reply with the same command code.
 
-        The command is encrypted and sent over the TCP connection.
-        Use wait_for_command_response() afterwards to get the server's response.
-        The background reader loop will route the response.
+        The lock covers the whole round-trip, so concurrent commands cannot
+        take each other's replies. The pending code is set before writing, so
+        a reply that arrives while the write is still draining is kept.
 
         Args:
             command: Command string (e.g., "26,1" for climate ON)
-
-        Raises:
-            OVMSConnectionError: If not connected or send fails
-        """
-        if not self.connected or not self._writer:
-            _LOGGER.error("Cannot send command - not connected to OVMS server")
-            raise OVMSConnectionError("Not connected to OVMS server")
-
-        if not self.authenticated or not self._tx_cipher:
-            _LOGGER.error("Cannot send command - not authenticated")
-            raise OVMSConnectionError("Not authenticated with OVMS server")
-
-        # Build the command message
-        message = f"MP-0 C{command}"
-        _LOGGER.debug("Sending command: %s", message)
-
-        try:
-            async with self._command_lock:
-                # Clear any previous command response before sending
-                self._command_event.clear()
-                self._command_response = None
-                await self._send_encrypted_message(message)
-            _LOGGER.debug("Command sent successfully")
-        except Exception as err:
-            _LOGGER.error("Failed to send command: %s", err)
-            raise OVMSConnectionError(f"Failed to send command: {err}") from err
-
-    async def read_response(self, timeout: int = 5) -> str | None:
-        """Read a response via the background reader's command event.
-
-        This is a compatibility wrapper. New code should use
-        wait_for_command_response() directly.
-
-        Args:
-            timeout: Read timeout in seconds
+            timeout: Seconds to wait for the reply
 
         Returns:
-            Response string or None if timeout
+            Reply dict with 'code', 'result', 'message', or None if no
+            matching reply arrived within the timeout
+
+        Raises:
+            OVMSCommandNotSent: Nothing was written (safe to retry)
+            OVMSConnectionLost: The command may have been written
         """
-        response = await self.wait_for_command_response(timeout=timeout)
-        if response is not None:
-            return f"c{response.get('code', '')},{response.get('result', '')},{response.get('message', '')}"
-        return None
+        message = f"MP-0 C{command}"
+        async with self._command_lock:
+            self._pending_code = int(command.split(",", 1)[0])
+            self._connection_lost = False
+            self._command_response = None
+            self._command_event.clear()
+            try:
+                _LOGGER.debug("Sending command: %s", message)
+                self._write_encrypted(message)
+                try:
+                    async with asyncio.timeout(SEND_TIMEOUT):
+                        await self._writer.drain()
+                except (TimeoutError, OSError, AttributeError) as err:
+                    raise OVMSConnectionLost(
+                        f"Connection failed while sending: {err!r}"
+                    ) from err
+
+                try:
+                    await asyncio.wait_for(self._command_event.wait(), timeout)
+                except TimeoutError:
+                    _LOGGER.debug(
+                        "Timed out waiting for reply to %s after %ss", command, timeout
+                    )
+                    # Probably a half-open socket: mark it down before releasing
+                    # the lock, so a queued command reconnects instead of writing
+                    # into it.
+                    self.connected = False
+                    self.authenticated = False
+                    return None
+                if self._connection_lost:
+                    raise OVMSConnectionLost(
+                        "Connection lost while waiting for the reply"
+                    )
+                return self._command_response
+            finally:
+                self._pending_code = None
