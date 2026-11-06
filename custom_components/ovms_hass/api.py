@@ -19,6 +19,7 @@ import re
 from typing import Any, Self, TypeVar, get_args
 
 import aiohttp
+from homeassistant.util.ssl import get_default_context
 from yarl import URL
 
 _LOGGER = logging.getLogger(__name__)
@@ -382,9 +383,9 @@ class OVMSApiClient:
             OVMSConnectionError: If unable to establish connection
             OVMSAuthenticationError: If authentication fails
         """
-        connector = aiohttp.TCPConnector(
-            verify_ssl=False  # OVMS uses self-signed certificates
-        )
+        # Verify the server certificate. HA's pre-built context avoids loading
+        # the CA store inside the event loop.
+        connector = aiohttp.TCPConnector(ssl=get_default_context())
         self.session = aiohttp.ClientSession(
             connector=connector,
             timeout=aiohttp.ClientTimeout(total=self.timeout),
@@ -454,7 +455,6 @@ class OVMSApiClient:
                 json=json_data,
                 params=params,
                 cookies=cookies,
-                ssl=False,
             ) as response:
                 text = await response.text()
 
@@ -516,7 +516,6 @@ class OVMSApiClient:
                 "GET",
                 url,
                 params=params,
-                ssl=False,
             ) as response:
                 if response.status == 401:
                     raise OVMSAuthenticationError("Invalid username or password")
