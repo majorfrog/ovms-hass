@@ -9,7 +9,10 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from custom_components.ovms_hass import _async_connect_protocol
 from custom_components.ovms_hass.api import (
@@ -22,7 +25,11 @@ from custom_components.ovms_hass.coordinator import (
     OVMSDataCoordinator,
     OVMSProtocolClient,
 )
-from custom_components.ovms_hass.entities import ACOnButton
+from custom_components.ovms_hass.entities import (
+    ACOnButton,
+    ModuleResetButton,
+    WakeUpButton,
+)
 from custom_components.ovms_hass.services import async_setup_services
 
 ACK = {"code": 26, "result": 0, "message": ""}
@@ -40,7 +47,8 @@ def coordinator(hass: HomeAssistant) -> OVMSDataCoordinator:
     client.disconnect = AsyncMock()
     coord.ovms_client = client
     coord.async_request_refresh = AsyncMock()
-    return coord
+    yield coord
+    coord.async_cancel_scheduled()
 
 
 async def test_ack_returns_response(coordinator: OVMSDataCoordinator) -> None:
@@ -214,3 +222,152 @@ async def test_failed_reconnect_starts_background_reconnect(
 
     assert await coordinator._ensure_protocol_connection() is False
     client.start_reconnect.assert_called_once()
+
+
+async def _tick(hass: HomeAssistant, freezer, seconds: float) -> None:
+    """Move the clock and run the timers that are now due."""
+    freezer.tick(seconds)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+
+async def test_ack_returns_without_refreshing(
+    coordinator: OVMSDataCoordinator,
+) -> None:
+    """The press returns on the ack, without waiting for REST."""
+    await coordinator.async_send_command("26,1", "AC ON")
+
+    coordinator.async_request_refresh.assert_not_awaited()
+
+
+async def test_refresh_runs_after_delay(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator, freezer
+) -> None:
+    """The refresh comes about 5 s after the ack, when the server has the new state."""
+    await coordinator.async_send_command("26,1", "AC ON")
+
+    await _tick(hass, freezer, 4)
+    coordinator.async_request_refresh.assert_not_awaited()
+    await _tick(hass, freezer, 2)
+    coordinator.async_request_refresh.assert_awaited_once()
+
+
+async def test_commands_close_together_share_one_refresh(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator, freezer
+) -> None:
+    """Each command restarts the delay; a burst gives one refresh."""
+    await coordinator.async_send_command("16,80", "charge limit 80%")
+    await _tick(hass, freezer, 3)
+    await coordinator.async_send_command("15,10", "charging current 10 A")
+
+    await _tick(hass, freezer, 3)
+    coordinator.async_request_refresh.assert_not_awaited()
+    await _tick(hass, freezer, 3)
+    coordinator.async_request_refresh.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "reply", [None, {"code": 26, "result": 1, "message": ""}], ids=["no_ack", "rejected"]
+)
+async def test_failed_command_schedules_no_refresh(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator, freezer, reply
+) -> None:
+    """Nothing changed on the car, so nothing to refresh."""
+    coordinator.ovms_client.async_command.return_value = reply
+
+    with pytest.raises(OVMSCommandError):
+        await coordinator.async_send_command("26,1", "AC ON")
+
+    await _tick(hass, freezer, 6)
+    coordinator.async_request_refresh.assert_not_awaited()
+
+
+async def test_query_schedules_no_refresh(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator, freezer
+) -> None:
+    """The HVAC check-up query never leads to a REST refresh."""
+    coordinator.ovms_client.async_command.return_value = {
+        "code": 7,
+        "result": 0,
+        "message": "yes",
+    }
+
+    await coordinator.async_query_hvac()
+
+    await _tick(hass, freezer, 6)
+    coordinator.async_request_refresh.assert_not_awaited()
+
+
+async def test_cancel_scheduled_stops_pending_refresh(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator, freezer
+) -> None:
+    """Unload cancels a refresh that hasn't started yet."""
+    await coordinator.async_send_command("26,1", "AC ON")
+    coordinator.async_cancel_scheduled()
+
+    await _tick(hass, freezer, 6)
+    coordinator.async_request_refresh.assert_not_awaited()
+
+
+async def test_cancel_scheduled_stops_running_refresh(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator, freezer
+) -> None:
+    """Unload cancels a refresh that is still fetching, before the session closes."""
+    coordinator.async_request_refresh.side_effect = asyncio.Event().wait
+    await coordinator.async_send_command("26,1", "AC ON")
+    freezer.tick(6)
+    async_fire_time_changed(hass)
+    await asyncio.sleep(0)
+    (task,) = coordinator._command_refresh_tasks
+
+    coordinator.async_cancel_scheduled()
+    await hass.async_block_till_done()
+
+    assert task.cancelled()
+
+
+async def test_wakeup_press_does_not_wait(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator
+) -> None:
+    """The wake-up press returns on the ack; the scheduled refresh follows."""
+    button = WakeUpButton(coordinator, "APA123")
+    button.hass = hass
+
+    await asyncio.wait_for(button.async_press(), 1)
+
+    assert coordinator.async_request_refresh.await_count == 0
+
+
+async def test_module_reset_does_not_refresh(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator, freezer
+) -> None:
+    """The module is rebooting, so there is nothing to refresh."""
+    button = ModuleResetButton(coordinator, "APA123")
+    button.hass = hass
+
+    await button.async_press()
+
+    await _tick(hass, freezer, 6)
+    coordinator.async_request_refresh.assert_not_awaited()
+
+
+async def test_cancel_scheduled_stops_refresh_still_running_from_earlier_command(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator, freezer
+) -> None:
+    """A slow refresh from an earlier command is still cancelled on unload."""
+    coordinator.async_request_refresh.side_effect = asyncio.Event().wait
+    await coordinator.async_send_command("26,1", "AC ON")
+    freezer.tick(6)
+    async_fire_time_changed(hass)
+    await asyncio.sleep(0)
+    (first,) = coordinator._command_refresh_tasks
+
+    await coordinator.async_send_command("26,0", "AC OFF")
+    freezer.tick(6)
+    async_fire_time_changed(hass)
+    await asyncio.sleep(0)
+
+    coordinator.async_cancel_scheduled()
+    await hass.async_block_till_done()
+
+    assert first.cancelled()

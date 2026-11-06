@@ -20,7 +20,7 @@ from datetime import timedelta
 from collections.abc import Callable
 from typing import Any
 
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -44,6 +44,12 @@ PING_INTERVAL = 120  # 2 minutes
 # connection is dead even if writes still succeed (half-open TCP).
 STALE_TIMEOUT = PING_INTERVAL + 60
 RECONNECT_DELAY = 3  # seconds before reconnect attempt
+
+# Seconds after an acknowledged command before the REST refresh. The server
+# only has the new state after the car's next status messages (about 2 s
+# after the ack for the D message on 2026-11-05), so an immediate refresh
+# mostly reads the old state.
+COMMAND_REFRESH_DELAY = 5
 
 # Seconds after AC ON/OFF at which v.e.hvac is queried
 HVAC_FOLLOWUP_DELAYS = (15, 60)
@@ -93,6 +99,10 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         self.ovms_client: OVMSProtocolClient | None = None
         self._hvac_followup_unsubs: list[CALLBACK_TYPE] = []
         self._hvac_query_task: asyncio.Task | None = None
+        self._unsub_command_refresh: CALLBACK_TYPE | None = None
+        # Refreshes started after commands; a slow one can still be running
+        # when the next fires, and unload must cancel both.
+        self._command_refresh_tasks: set[asyncio.Task] = set()
         self.data: dict[str, Any] = {
             "vehicle_id": vehicle_id,
             "vehicle_name": vehicle_id,
@@ -185,8 +195,9 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         Raises:
             OVMSCommandError: If the query was not sent or not acknowledged
         """
+        # The reply carries the value, so a REST refresh would add nothing.
         response = await self.async_send_command(
-            HVAC_QUERY_COMMAND, "HVAC status query"
+            HVAC_QUERY_COMMAND, "HVAC status query", refresh=False
         )
         value = _parse_hvac_reply(response.get("message", ""))
         if value is None:
@@ -221,6 +232,45 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("HVAC follow-up query failed: %s", err)
             return
         _LOGGER.debug("HVAC follow-up query: hvac=%s", value)
+
+    @callback
+    def _async_schedule_command_refresh(self) -> None:
+        """Refresh COMMAND_REFRESH_DELAY s from now, replacing a pending one.
+
+        Commands close together therefore share one refresh, after the last.
+        """
+        if self._unsub_command_refresh:
+            self._unsub_command_refresh()
+        self._unsub_command_refresh = async_call_later(
+            self.hass,
+            COMMAND_REFRESH_DELAY,
+            HassJob(self._async_command_refresh_fire, cancel_on_shutdown=True),
+        )
+
+    @callback
+    def _async_command_refresh_fire(self, _now: Any) -> None:
+        """Start the refresh in the background (it goes through the debouncer)."""
+        self._unsub_command_refresh = None
+        task = self.hass.async_create_background_task(
+            self.async_request_refresh(),
+            f"OVMS {self.vehicle_id} refresh after command",
+        )
+        self._command_refresh_tasks.add(task)
+        task.add_done_callback(self._command_refresh_tasks.discard)
+
+    @callback
+    def async_cancel_scheduled(self) -> None:
+        """Cancel all scheduled and running background work (for unload).
+
+        A running refresh is cancelled too, so it doesn't keep fetching while
+        the API session is closed.
+        """
+        self.async_cancel_hvac_followup()
+        if self._unsub_command_refresh:
+            self._unsub_command_refresh()
+            self._unsub_command_refresh = None
+        for task in self._command_refresh_tasks:
+            task.cancel()
 
     @callback
     def async_cancel_hvac_followup(self) -> None:
@@ -271,7 +321,7 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         }
 
     async def async_send_command(
-        self, command: str, label: str | None = None
+        self, command: str, label: str | None = None, *, refresh: bool = True
     ) -> dict[str, Any]:
         """Send a command to the vehicle and return the car's acknowledgement.
 
@@ -283,6 +333,9 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         Args:
             command: Command string (e.g., "26,1" for AC ON)
             label: Short name used in log lines and error messages
+            refresh: Refresh the REST data COMMAND_REFRESH_DELAY seconds
+                after the car acknowledges, in the background. False for
+                commands that change nothing the REST API reports
 
         Returns:
             Reply dict with 'code', 'result' (0) and 'message'
@@ -342,7 +395,8 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
                 raise OVMSCommandError(f"{vid} rejected {label} ({reason})")
 
             _LOGGER.info("Coordinator: %s acknowledged", label)
-            await self.async_request_refresh()
+            if refresh:
+                self._async_schedule_command_refresh()
             return response
 
         _LOGGER.error("Coordinator: %s could not be sent after retry", label)

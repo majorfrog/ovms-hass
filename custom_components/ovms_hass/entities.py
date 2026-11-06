@@ -8,7 +8,6 @@ corresponding vehicle feature appropriately within Home Assistant.
 from __future__ import annotations
 
 from abc import ABC
-import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import logging
@@ -1098,10 +1097,9 @@ class WakeUpButton(OVMSEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Handle button press - send wake-up command to vehicle."""
         _LOGGER.info("Sending wake-up command to vehicle %s", self.vehicle_id)
+        # The coordinator refreshes a few seconds after the ack, which also
+        # gives the vehicle time to wake up.
         await self.coordinator.async_send_command("18", "wake-up")
-        # Wait a moment for the vehicle to wake up before refreshing
-        await asyncio.sleep(2)
-        await self.coordinator.async_request_refresh()
 
 
 class HomeLinkButton(OVMSEntity, ButtonEntity):
@@ -1155,7 +1153,7 @@ class ModuleResetButton(OVMSEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Handle button press - reset OVMS module."""
         _LOGGER.info("Resetting OVMS module for vehicle %s", self.vehicle_id)
-        await self.coordinator.async_send_command("5", "module reset")
+        await self.coordinator.async_send_command("5", "module reset", refresh=False)
         # Module will restart, don't refresh immediately
         _LOGGER.info("Module reset command sent, module will restart")
 

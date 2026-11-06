@@ -44,7 +44,7 @@ async def coordinator(hass: HomeAssistant) -> OVMSDataCoordinator:
     client.async_command = AsyncMock(return_value=reply("yes"))
     coord.async_request_refresh = AsyncMock()
     yield coord
-    coord.async_cancel_hvac_followup()
+    coord.async_cancel_scheduled()
 
 
 @pytest.mark.parametrize(
@@ -62,6 +62,13 @@ async def test_query_parses_yes_and_no(
     assert coordinator.ovms_client.async_command.await_args.args[0] == (
         "7,metrics get v.e.hvac"
     )
+
+
+async def test_query_does_not_refresh(coordinator: OVMSDataCoordinator) -> None:
+    """The reply carries the value, so a REST refresh adds nothing."""
+    await coordinator.async_query_hvac()
+
+    coordinator.async_request_refresh.assert_not_awaited()
 
 
 async def test_query_unparseable_returns_none(coordinator: OVMSDataCoordinator) -> None:
@@ -169,3 +176,18 @@ async def test_cancel_stops_running_query(
     await asyncio.sleep(0)
 
     assert task.cancelled()
+
+
+async def test_cancel_scheduled_stops_hvac_followup(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator
+) -> None:
+    """Unload also cancels the pending HVAC check-ups."""
+    coordinator.async_query_hvac = AsyncMock(return_value=True)
+    now = dt_util.utcnow()
+
+    coordinator.async_schedule_hvac_followup()
+    coordinator.async_cancel_scheduled()
+    async_fire_time_changed(hass, now + timedelta(seconds=61))
+    await hass.async_block_till_done()
+
+    assert coordinator.async_query_hvac.await_count == 0

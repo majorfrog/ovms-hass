@@ -245,7 +245,7 @@ async def _async_close_clients(
 ) -> None:
     """Stop the HVAC follow-up and close both server connections."""
     if coordinator:
-        coordinator.async_cancel_hvac_followup()
+        coordinator.async_cancel_scheduled()
         if coordinator.ovms_client:
             try:
                 await coordinator.ovms_client.disconnect()
