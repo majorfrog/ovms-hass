@@ -348,11 +348,29 @@ class RangeSensor(OVMSEntity, SensorEntity):
         return self.coordinator.data.get("status", {}).get("estimatedrange")
 
 
+def _from_tenths(value: Any) -> float | None:
+    """Convert an OVMS distance in 1/10 units to whole units.
+
+    OVMS reports odometer and trip meter in tenths of a km or mile.
+    """
+    try:
+        return round(float(value) / 10, 1)
+    except (TypeError, ValueError):
+        return None
+
+
+def _distance_unit(coordinator: Any) -> str:
+    """Kilometres, or miles when the vehicle is set to miles ("M")."""
+    units = coordinator.data.get("status", {}).get("units")
+    return UnitOfLength.MILES if units == "M" else UnitOfLength.KILOMETERS
+
+
 class OdometerSensor(OVMSEntity, SensorEntity):
     """Sensor for vehicle odometer reading."""
 
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_suggested_display_precision = 0
 
     def __init__(self, coordinator: Any, vehicle_id: str) -> None:
         """Initialize odometer sensor."""
@@ -364,9 +382,14 @@ class OdometerSensor(OVMSEntity, SensorEntity):
         super().__init__(coordinator, config, vehicle_id)
 
     @property
-    def native_value(self) -> int | None:
-        """Return odometer reading."""
-        return self.coordinator.data.get("status", {}).get("odometer")
+    def native_unit_of_measurement(self) -> str:
+        """Return km or miles, as the vehicle reports."""
+        return _distance_unit(self.coordinator)
+
+    @property
+    def native_value(self) -> float | None:
+        """Return odometer reading (OVMS sends 1/10 units)."""
+        return _from_tenths(self.coordinator.data.get("status", {}).get("odometer"))
 
 
 class SpeedSensor(OVMSEntity, SensorEntity):
@@ -1672,8 +1695,8 @@ class TripMeterSensor(OVMSEntity, SensorEntity):
     """Sensor for trip meter (resettable distance)."""
 
     _attr_state_class = SensorStateClass.TOTAL
-    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
     _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_suggested_display_precision = 1
 
     def __init__(self, coordinator: Any, vehicle_id: str) -> None:
         """Initialize trip meter sensor."""
@@ -1685,13 +1708,18 @@ class TripMeterSensor(OVMSEntity, SensorEntity):
         super().__init__(coordinator, config, vehicle_id)
 
     @property
+    def native_unit_of_measurement(self) -> str:
+        """Return km or miles, as the vehicle reports."""
+        return _distance_unit(self.coordinator)
+
+    @property
     def native_value(self) -> float | None:
-        """Return trip meter distance."""
+        """Return trip meter distance (OVMS sends 1/10 units)."""
         # Try location first, then status
         tripmeter = self.coordinator.data.get("location", {}).get("tripmeter")
         if tripmeter is None:
             tripmeter = self.coordinator.data.get("status", {}).get("tripmeter")
-        return tripmeter
+        return _from_tenths(tripmeter)
 
 
 # =============================================================================
