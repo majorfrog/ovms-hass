@@ -14,6 +14,7 @@ from .coordinator import OVMSDataCoordinator
 TO_REDACT = {
     CONF_PASSWORD,
     CONF_USERNAME,
+    "vehicle_password",
     "car_vin",
     "latitude",
     "longitude",
