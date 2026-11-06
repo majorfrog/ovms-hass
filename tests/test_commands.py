@@ -371,3 +371,41 @@ async def test_cancel_scheduled_stops_refresh_still_running_from_earlier_command
     await hass.async_block_till_done()
 
     assert first.cancelled()
+
+
+async def test_send_command_service_returns_reply(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator
+) -> None:
+    """A shell command's output comes back as the service response."""
+    await _setup_entry(hass, coordinator)
+    coordinator.ovms_client.async_command.return_value = {
+        "code": 7,
+        "result": 0,
+        "message": "yes",
+    }
+
+    response = await hass.services.async_call(
+        "ovms_hass",
+        "send_command",
+        {"vehicle_id": "APA123", "command": "metrics get v.e.hvac"},
+        blocking=True,
+        return_response=True,
+    )
+
+    assert response == {"message": "yes"}
+
+
+async def test_send_command_service_works_without_response(
+    hass: HomeAssistant, coordinator: OVMSDataCoordinator
+) -> None:
+    """Existing calls that don't ask for a response keep working."""
+    await _setup_entry(hass, coordinator)
+
+    await hass.services.async_call(
+        "ovms_hass",
+        "send_command",
+        {"vehicle_id": "APA123", "command": "metrics get v.e.hvac"},
+        blocking=True,
+    )
+
+    coordinator.ovms_client.async_command.assert_awaited_once()

@@ -2,7 +2,9 @@
 
 send_command:
   name: Send Command
-  description: Send a generic OVMS command to the vehicle.
+  description: >-
+    Send a generic OVMS shell command to the vehicle. Use a response variable
+    to get the command's output as `message`.
   fields:
     vehicle_id:
       name: Vehicle ID

@@ -215,6 +215,25 @@ data:
   command: "stat" # Request status update
 ```
 
+The command's output comes back as the service response. In a script or
+automation, use `response_variable` to read it:
+
+```yaml
+- action: ovms_hass.send_command
+  data:
+    vehicle_id: "DEMO"
+    command: "metrics get v.e.hvac"
+  response_variable: reply
+- if: "{{ reply.message == 'yes' }}"
+  then:
+    - action: notify.notify
+      data:
+        message: "Climate is running"
+```
+
+The call fails (raises an error) when the car doesn't acknowledge the
+command or rejects it.
+
 ### ovms_hass.send_sms
 
 Send an SMS message via the vehicle's modem.

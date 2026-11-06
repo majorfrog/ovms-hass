@@ -11,7 +11,12 @@ import logging
 
 import voluptuous as vol
 
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
@@ -103,13 +108,18 @@ def _get_coordinator(hass: HomeAssistant, vehicle_id: str):
     raise ServiceValidationError(f"Unknown OVMS vehicle {vehicle_id}")
 
 
-async def async_send_command(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Send a generic shell command to the vehicle (Command 7)."""
+async def async_send_command(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
+    """Send a generic shell command to the vehicle (Command 7).
+
+    Returns the command's output as {"message": ...}. HA drops it when the
+    caller doesn't ask for a response.
+    """
     vehicle_id = call.data["vehicle_id"]
     command = call.data["command"]
     coordinator = _get_coordinator(hass, vehicle_id)
     _LOGGER.info("Sending command to %s: %s", vehicle_id, command)
-    await coordinator.async_send_command(f"7,{command}", command)
+    reply = await coordinator.async_send_command(f"7,{command}", command)
+    return {"message": reply.get("message", "")}
 
 
 async def async_send_sms(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -229,7 +239,15 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # would be run as an executor job and its coroutine never awaited.
     for name, handler, schema in SERVICES:
         hass.services.async_register(
-            DOMAIN, name, partial(handler, hass), schema=schema
+            DOMAIN,
+            name,
+            partial(handler, hass),
+            schema=schema,
+            supports_response=(
+                SupportsResponse.OPTIONAL
+                if name == SERVICE_SEND_COMMAND
+                else SupportsResponse.NONE
+            ),
         )
 
     _LOGGER.info("OVMS services registered")
