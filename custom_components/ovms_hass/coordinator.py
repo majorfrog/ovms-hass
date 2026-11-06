@@ -695,9 +695,17 @@ class OVMSProtocolClient:
             raise OVMSConnectionError(
                 "Connection timeout during authentication"
             ) from err
+        except OVMSConnectionError:
+            self.connected = False
+            raise
+        except OSError as err:
+            # Refused, unreachable, DNS, TLS: expected while the server or
+            # the network is down, so no traceback. Callers log the message.
+            self.connected = False
+            raise OVMSConnectionError(f"Failed to connect to OVMS: {err}") from err
         except Exception as err:
             self.connected = False
-            _LOGGER.exception("Failed to connect/authenticate with OVMS server")
+            _LOGGER.exception("Unexpected error connecting to the OVMS server")
             raise OVMSConnectionError(f"Failed to connect to OVMS: {err}") from err
 
     async def disconnect(self, intentional: bool = True) -> None:
@@ -873,9 +881,14 @@ class OVMSProtocolClient:
         self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
     async def _reconnect_loop(self) -> None:
-        """Try to restore Protocol v2 connection in the background."""
+        """Try to restore Protocol v2 connection in the background.
+
+        Logs one warning per outage, the later failures at debug level, and
+        one info line when the connection is back.
+        """
         delay = RECONNECT_DELAY
         max_delay = 60
+        failures = 0
 
         while self._auto_reconnect_enabled and not self.connected:
             async with self._reconnect_lock:
@@ -883,7 +896,7 @@ class OVMSProtocolClient:
                     return
 
                 try:
-                    _LOGGER.info(
+                    _LOGGER.debug(
                         "Protocol v2 auto-reconnect: reconnecting to %s:%d",
                         self.host,
                         self.port,
@@ -891,11 +904,21 @@ class OVMSProtocolClient:
                     await self.disconnect(intentional=False)
                     await self.connect()
                     self.start_background_reader()
-                    _LOGGER.info("Protocol v2 auto-reconnect successful")
+                    if failures:
+                        _LOGGER.info(
+                            "Protocol v2 connection to %s restored after %d failed attempts",
+                            self.host,
+                            failures,
+                        )
+                    else:
+                        _LOGGER.info("Protocol v2 auto-reconnect successful")
                     return
                 except OVMSConnectionError as err:
-                    _LOGGER.warning(
-                        "Protocol v2 auto-reconnect failed, retrying in %ds: %s",
+                    failures += 1
+                    _LOGGER.log(
+                        logging.WARNING if failures == 1 else logging.DEBUG,
+                        "Protocol v2 auto-reconnect failed, retrying in %ds"
+                        " (further failures logged at debug level): %s",
                         delay,
                         err,
                     )

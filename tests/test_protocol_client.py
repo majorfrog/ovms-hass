@@ -228,3 +228,44 @@ async def test_connect_times_out_when_login_reply_never_comes() -> None:
 
     assert not client.connected
     writer.close.assert_called_once()
+
+
+async def test_connect_refused_logs_no_traceback(caplog: pytest.LogCaptureFixture) -> None:
+    """An unreachable server is expected, not a bug: no traceback."""
+    client = OVMSProtocolClient("h", "u", "p", "APA123", use_tls=False)
+
+    with (
+        patch.object(
+            coordinator_module.asyncio,
+            "open_connection",
+            AsyncMock(side_effect=ConnectionRefusedError("refused")),
+        ),
+        pytest.raises(coordinator_module.OVMSConnectionError, match="refused"),
+    ):
+        await client.connect()
+
+    assert not [r for r in caplog.records if r.exc_info]
+
+
+async def test_reconnect_outage_warns_once_and_logs_recovery(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Repeated failures in one outage give one warning, then one recovery line."""
+    client = OVMSProtocolClient("h", "u", "p", "APA123")
+    down = coordinator_module.OVMSConnectionError("down")
+
+    with (
+        patch.object(coordinator_module, "RECONNECT_DELAY", 0),
+        patch.object(client, "disconnect", AsyncMock()),
+        patch.object(client, "connect", AsyncMock(side_effect=[down, down, down, None])),
+        patch.object(client, "start_background_reader"),
+    ):
+        await client._reconnect_loop()
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "down" in warnings[0].getMessage()
+    assert any(
+        r.levelname == "INFO" and "restored" in r.getMessage() for r in caplog.records
+    )
+    assert not [r for r in caplog.records if r.exc_info]
