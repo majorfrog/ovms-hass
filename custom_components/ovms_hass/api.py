@@ -390,15 +390,25 @@ class OVMSApiClient:
             timeout=aiohttp.ClientTimeout(total=self.timeout),
         )
 
-        await self.login()
+        try:
+            await self.login()
+        except BaseException:
+            await self._close_session()
+            raise
 
     async def disconnect(self) -> None:
         """Close connection and logout from OVMS server."""
-        if self.session_id:
-            await self.logout()
+        try:
+            if self.session_id:
+                await self.logout()
+        finally:
+            await self._close_session()
 
-        if self.session:
-            await self.session.close()
+    async def _close_session(self) -> None:
+        """Close the aiohttp session, if any."""
+        session, self.session = self.session, None
+        if session:
+            await session.close()
 
     async def _request(
         self,
@@ -491,7 +501,8 @@ class OVMSApiClient:
         """Authenticate and create a session cookie.
 
         Raises:
-            OVMSAuthenticationError: If login fails
+            OVMSAuthenticationError: If the server rejects the credentials
+            OVMSConnectionError: If the server can't be reached or fails (5xx)
         """
         params = {"username": self.username, "password": self.password}
 
@@ -509,6 +520,8 @@ class OVMSApiClient:
             ) as response:
                 if response.status == 401:
                     raise OVMSAuthenticationError("Invalid username or password")
+                if response.status >= 500:
+                    raise OVMSConnectionError(f"Login failed: HTTP {response.status}")
                 if response.status >= 400:
                     text = await response.text()
                     raise OVMSAuthenticationError(
@@ -551,17 +564,17 @@ class OVMSApiClient:
 
         except OVMSAPIError as e:
             raise OVMSAuthenticationError(f"Login failed: {e}") from e
-        except OVMSAuthenticationError as e:
-            raise e
+        except TimeoutError as err:
+            raise OVMSConnectionError(f"Login timeout: {err}") from err
         except aiohttp.ClientError as err:
-            raise OVMSAuthenticationError(f"Login error: {err}") from err
+            raise OVMSConnectionError(f"Login error: {err}") from err
 
     async def logout(self) -> None:
         """Logout and destroy session cookie."""
         try:
             await self._request("DELETE", "/api/cookie")
-        except OVMSAPIError:
-            pass  # Ignore errors during logout
+        except (OVMSAPIError, OVMSAuthenticationError, OVMSConnectionError) as err:
+            _LOGGER.debug("Ignoring logout error: %s", err)
         finally:
             self.session_id = None
 

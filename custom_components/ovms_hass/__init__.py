@@ -35,6 +35,7 @@ from homeassistant.const import (
     Platform,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
@@ -148,108 +149,113 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     Returns:
         True if setup was successful
+
+    Raises:
+        ConfigEntryNotReady: If the server can't be reached (HA retries)
+        ConfigEntryError: If the server rejects the credentials
     """
+    host = entry.data.get(CONF_HOST, DEFAULT_HOST)
+    # Create API client (always create new instance per entry)
+    api_client = OVMSApiClient(
+        host=host,
+        username=entry.data[CONF_USERNAME],
+        password=entry.data[CONF_PASSWORD],
+        port=entry.data.get(CONF_PORT, DEFAULT_PORT),
+        use_https=True,
+    )
+
+    # Connect to OVMS server. connect() closes its session when it fails.
     try:
-        # Create API client (always create new instance per entry)
-        api_client = OVMSApiClient(
-            host=entry.data.get(CONF_HOST, DEFAULT_HOST),
-            username=entry.data[CONF_USERNAME],
-            password=entry.data[CONF_PASSWORD],
-            port=entry.data.get(CONF_PORT, DEFAULT_PORT),
-            use_https=True,
-        )
-
-        # Connect to OVMS server
-        try:
-            await api_client.connect()
-            _LOGGER.info(
-                "Connected to OVMS server %s", entry.data.get(CONF_HOST, DEFAULT_HOST)
-            )
-        except OVMSAuthenticationError as err:
-            _LOGGER.error("OVMS authentication failed: %s", err)
-            return False
-        except OVMSConnectionError as err:
-            _LOGGER.error(
-                "Failed to connect to OVMS server %s: %s",
-                entry.data.get(CONF_HOST, DEFAULT_HOST),
-                err,
-            )
-            return False
-
-        # Create coordinator
-        # Use entry ID as vehicle_id if not explicitly set for consistent unique_ids
-        vehicle_id = entry.data.get("vehicle_id", entry.entry_id)
-
-        # Get scan interval from options (if set) or data
-        scan_interval = entry.options.get(
-            "scan_interval",
-            entry.data.get("scan_interval", DEFAULT_SCAN_INTERVAL),
-        )
-
-        coordinator = OVMSDataCoordinator(
-            hass,
-            api_client,
-            vehicle_id,
-            scan_interval=scan_interval,
-        )
-
-        # Store coordinator in entry runtime data
-        hass.data.setdefault(DOMAIN, {})
-        entry.runtime_data = {
-            "coordinator": coordinator,
-            "api_client": api_client,
-        }
-
-        # Set up Protocol v2 client for commands
-        # Use vehicle_password for Protocol v2 if available, otherwise fall back to password
-        # The vehicle_password is the password configured in the OVMS module itself
-        # which is different from the server account password
-        vehicle_password = entry.data.get(CONF_VEHICLE_PASSWORD) or entry.data[CONF_PASSWORD]
-        
-        _LOGGER.info(
-            "Setting up Protocol v2 client for vehicle %s - vehicle_password configured: %s",
-            vehicle_id,
-            "YES" if entry.data.get(CONF_VEHICLE_PASSWORD) else "NO (using REST API password as fallback)",
-        )
-        
-        protocol_client = OVMSProtocolClient(
-            host=entry.data.get(CONF_HOST, DEFAULT_HOST),
-            username=entry.data[CONF_USERNAME],
-            password=vehicle_password,  # Use vehicle module password for Protocol v2
-            vehicle_id=vehicle_id,
-            port=6870,  # TLS port
-            use_tls=True,
-        )
-
-        await _async_connect_protocol(coordinator, protocol_client)
-
-        # Initial data fetch (don't fail if it errors - vehicle may not have data yet)
-        try:
-            await coordinator.async_config_entry_first_refresh()
-        except (OVMSConnectionError, OVMSAPIError) as err:
-            _LOGGER.debug(
-                "Initial data fetch failed (vehicle may not have data yet): %s", err
-            )
-            # Allow setup to continue even if initial fetch fails
-
-        # Forward entry to entity platforms
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-        # Register services (only once, check if already registered)
-        if not hass.services.has_service(DOMAIN, "send_command"):
-            await async_setup_services(hass)
-
-        # Add listener for options updates
-        entry.async_on_unload(entry.add_update_listener(async_update_options))
-
+        await api_client.connect()
     except OVMSAuthenticationError as err:
-        _LOGGER.error("OVMS authentication error: %s", err)
-        return False
+        raise ConfigEntryError(f"OVMS login failed: {err}") from err
     except OVMSConnectionError as err:
-        _LOGGER.error("OVMS connection error: %s", err)
-        return False
-    else:
-        return True
+        raise ConfigEntryNotReady(f"Cannot reach OVMS server {host}: {err}") from err
+    _LOGGER.info("Connected to OVMS server %s", host)
+
+    # Create coordinator
+    # Use entry ID as vehicle_id if not explicitly set for consistent unique_ids
+    vehicle_id = entry.data.get("vehicle_id", entry.entry_id)
+
+    # Get scan interval from options (if set) or data
+    scan_interval = entry.options.get(
+        "scan_interval",
+        entry.data.get("scan_interval", DEFAULT_SCAN_INTERVAL),
+    )
+
+    coordinator = OVMSDataCoordinator(
+        hass,
+        api_client,
+        vehicle_id,
+        scan_interval=scan_interval,
+    )
+
+    # Store coordinator in entry runtime data
+    entry.runtime_data = {
+        "coordinator": coordinator,
+        "api_client": api_client,
+    }
+
+    # Set up Protocol v2 client for commands
+    # Use vehicle_password for Protocol v2 if available, otherwise fall back to password
+    # The vehicle_password is the password configured in the OVMS module itself
+    # which is different from the server account password
+    vehicle_password = entry.data.get(CONF_VEHICLE_PASSWORD) or entry.data[CONF_PASSWORD]
+
+    _LOGGER.info(
+        "Setting up Protocol v2 client for vehicle %s - vehicle_password configured: %s",
+        vehicle_id,
+        "YES" if entry.data.get(CONF_VEHICLE_PASSWORD) else "NO (using REST API password as fallback)",
+    )
+
+    protocol_client = OVMSProtocolClient(
+        host=host,
+        username=entry.data[CONF_USERNAME],
+        password=vehicle_password,  # Use vehicle module password for Protocol v2
+        vehicle_id=vehicle_id,
+        port=6870,  # TLS port
+        use_tls=True,
+    )
+
+    try:
+        await _async_connect_protocol(coordinator, protocol_client)
+        # Raises ConfigEntryNotReady if the first refresh fails
+        await coordinator.async_config_entry_first_refresh()
+    except BaseException:
+        # HA does not call async_unload_entry after a failed setup, so close
+        # the connections here or every retry leaks one.
+        await _async_close_clients(coordinator, api_client)
+        raise
+
+    # Forward entry to entity platforms
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Register services (only once, check if already registered)
+    if not hass.services.has_service(DOMAIN, "send_command"):
+        await async_setup_services(hass)
+
+    # Add listener for options updates
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
+
+    return True
+
+
+async def _async_close_clients(
+    coordinator: OVMSDataCoordinator | None, api_client: OVMSApiClient | None
+) -> None:
+    """Stop the HVAC follow-up and close both server connections."""
+    if coordinator:
+        coordinator.async_cancel_hvac_followup()
+        if coordinator.ovms_client:
+            try:
+                await coordinator.ovms_client.disconnect()
+            except (OVMSConnectionError, OVMSAPIError) as err:
+                _LOGGER.debug("Error disconnecting protocol client: %s", err)
+    if api_client:
+        try:
+            await api_client.disconnect()
+        except (OVMSConnectionError, OVMSAPIError) as err:
+            _LOGGER.debug("Error disconnecting API client: %s", err)
 
 
 async def _async_connect_protocol(
@@ -325,28 +331,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
-        # Clean up resources with proper error handling
-        try:
-            # Clean up protocol client first
-            coordinator = entry.runtime_data.get("coordinator")
-            if coordinator:
-                coordinator.async_cancel_hvac_followup()
-            if coordinator and coordinator.ovms_client:
-                try:
-                    await coordinator.ovms_client.disconnect()
-                except (OVMSConnectionError, OVMSAPIError) as err:
-                    _LOGGER.debug("Error disconnecting protocol client: %s", err)
-
-            # Clean up API client
-            api_client = entry.runtime_data.get("api_client")
-            if api_client:
-                try:
-                    await api_client.disconnect()
-                except (OVMSConnectionError, OVMSAPIError) as err:
-                    _LOGGER.debug("Error disconnecting API client: %s", err)
-
-        except (OVMSConnectionError, OVMSAPIError) as err:
-            _LOGGER.error("Error during cleanup: %s", err)
+        await _async_close_clients(
+            entry.runtime_data.get("coordinator"),
+            entry.runtime_data.get("api_client"),
+        )
 
     return unload_ok
 
