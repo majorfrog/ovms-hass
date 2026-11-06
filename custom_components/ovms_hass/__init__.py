@@ -171,7 +171,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryError(f"OVMS login failed: {err}") from err
     except OVMSConnectionError as err:
         raise ConfigEntryNotReady(f"Cannot reach OVMS server {host}: {err}") from err
-    _LOGGER.info("Connected to OVMS server %s", host)
+    _LOGGER.debug("Connected to OVMS server %s", host)
 
     # Create coordinator
     # Use entry ID as vehicle_id if not explicitly set for consistent unique_ids
@@ -203,7 +203,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # which is different from the server account password
     vehicle_password = entry.data.get(CONF_VEHICLE_PASSWORD) or entry.data[CONF_PASSWORD]
 
-    _LOGGER.info(
+    _LOGGER.debug(
         "Setting up Protocol v2 client for vehicle %s - vehicle_password configured: %s",
         vehicle_id,
         "YES" if entry.data.get(CONF_VEHICLE_PASSWORD) else "NO (using REST API password as fallback)",
@@ -277,7 +277,7 @@ async def _async_connect_protocol(
         # Start background reader loop and ping keepalive
         # This keeps the TCP connection alive and processes incoming messages
         protocol_client.start_background_reader()
-        _LOGGER.info(
+        _LOGGER.debug(
             "Protocol v2 client connected with background reader for vehicle %s",
             coordinator.vehicle_id,
         )
@@ -368,5 +368,5 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         # Currently no changes needed
         pass
 
-    _LOGGER.info("Migration to version %s successful", config_entry.version)
+    _LOGGER.debug("Migration to version %s successful", config_entry.version)
     return True

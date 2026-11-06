@@ -117,7 +117,7 @@ async def async_send_command(hass: HomeAssistant, call: ServiceCall) -> ServiceR
     vehicle_id = call.data["vehicle_id"]
     command = call.data["command"]
     coordinator = _get_coordinator(hass, vehicle_id)
-    _LOGGER.info("Sending command to %s: %s", vehicle_id, command)
+    _LOGGER.debug("Sending command to %s: %s", vehicle_id, command)
     reply = await coordinator.async_send_command(f"7,{command}", command)
     return {"message": reply.get("message", "")}
 
@@ -128,7 +128,7 @@ async def async_send_sms(hass: HomeAssistant, call: ServiceCall) -> None:
     phone_number = call.data["phone_number"]
     message = call.data["message"]
     coordinator = _get_coordinator(hass, vehicle_id)
-    _LOGGER.info("Sending SMS from %s to %s", vehicle_id, phone_number)
+    _LOGGER.debug("Sending SMS from %s to %s", vehicle_id, phone_number)
     await coordinator.async_send_command(f"40,{phone_number},{message}", "SMS")
 
 
@@ -140,7 +140,7 @@ async def async_set_charge_timer(hass: HomeAssistant, call: ServiceCall) -> None
     coordinator = _get_coordinator(hass, vehicle_id)
 
     if not enabled:
-        _LOGGER.info("Disabling charge timer for %s", vehicle_id)
+        _LOGGER.debug("Disabling charge timer for %s", vehicle_id)
         await coordinator.async_send_command("17,0", "charge timer")
         return
 
@@ -151,7 +151,7 @@ async def async_set_charge_timer(hass: HomeAssistant, call: ServiceCall) -> None
             f"Invalid time format: {start_time} (expected HH:MM)"
         )
     hour, minute = int(parts[0]), int(parts[1])
-    _LOGGER.info("Setting charge timer for %s to %s", vehicle_id, start_time)
+    _LOGGER.debug("Setting charge timer for %s to %s", vehicle_id, start_time)
     await coordinator.async_send_command(f"17,1,{hour},{minute}", "charge timer")
 
 
@@ -160,7 +160,7 @@ async def async_wakeup_subsystem(hass: HomeAssistant, call: ServiceCall) -> None
     vehicle_id = call.data["vehicle_id"]
     subsystem = call.data["subsystem"]
     coordinator = _get_coordinator(hass, vehicle_id)
-    _LOGGER.info("Waking subsystem %d for %s", subsystem, vehicle_id)
+    _LOGGER.debug("Waking subsystem %d for %s", subsystem, vehicle_id)
     await coordinator.async_send_command(f"19,{subsystem}", f"wake-up {subsystem}")
 
 
@@ -170,7 +170,7 @@ async def async_tpms_map_wheel(hass: HomeAssistant, call: ServiceCall) -> None:
     wheel = call.data["wheel"]
     sensor_id = call.data["sensor_id"]
     coordinator = _get_coordinator(hass, vehicle_id)
-    _LOGGER.info(
+    _LOGGER.debug(
         "Mapping TPMS sensor %s to wheel %s for %s", sensor_id, wheel, vehicle_id
     )
     await coordinator.async_send_command(f"7,tpms map {wheel} {sensor_id}", "TPMS map")
@@ -181,7 +181,7 @@ async def async_get_feature(hass: HomeAssistant, call: ServiceCall) -> None:
     vehicle_id = call.data["vehicle_id"]
     feature_number = call.data["feature_number"]
     coordinator = _get_coordinator(hass, vehicle_id)
-    _LOGGER.info("Getting feature %d for %s", feature_number, vehicle_id)
+    _LOGGER.debug("Getting feature %d for %s", feature_number, vehicle_id)
     await coordinator.async_send_command("1", "get feature")
 
 
@@ -191,7 +191,7 @@ async def async_set_feature(hass: HomeAssistant, call: ServiceCall) -> None:
     feature_number = call.data["feature_number"]
     value = call.data.get("value", "")
     coordinator = _get_coordinator(hass, vehicle_id)
-    _LOGGER.info("Setting feature %d to %s for %s", feature_number, value, vehicle_id)
+    _LOGGER.debug("Setting feature %d to %s for %s", feature_number, value, vehicle_id)
     await coordinator.async_send_command(
         f"2,{feature_number},{value}", f"set feature {feature_number}"
     )
@@ -202,7 +202,7 @@ async def async_get_parameter(hass: HomeAssistant, call: ServiceCall) -> None:
     vehicle_id = call.data["vehicle_id"]
     parameter_number = call.data["parameter_number"]
     coordinator = _get_coordinator(hass, vehicle_id)
-    _LOGGER.info("Getting parameter %d for %s", parameter_number, vehicle_id)
+    _LOGGER.debug("Getting parameter %d for %s", parameter_number, vehicle_id)
     await coordinator.async_send_command("3", "get parameter")
 
 
@@ -212,7 +212,7 @@ async def async_set_parameter(hass: HomeAssistant, call: ServiceCall) -> None:
     parameter_number = call.data["parameter_number"]
     value = call.data.get("value", "")
     coordinator = _get_coordinator(hass, vehicle_id)
-    _LOGGER.info(
+    _LOGGER.debug(
         "Setting parameter %d to %s for %s", parameter_number, value, vehicle_id
     )
     await coordinator.async_send_command(
@@ -250,7 +250,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             ),
         )
 
-    _LOGGER.info("OVMS services registered")
+    _LOGGER.debug("OVMS services registered")
 
 
 async def async_unload_services(hass: HomeAssistant) -> None:

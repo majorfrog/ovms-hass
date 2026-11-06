@@ -57,7 +57,7 @@ class OVMSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             Configuration flow result
         """
         vehicle_id = import_data.get(CONF_VEHICLE_ID, import_data.get(CONF_HOST, DEFAULT_HOST))
-        _LOGGER.info("Importing OVMS configuration for vehicle %s", vehicle_id)
+        _LOGGER.debug("Importing OVMS configuration for vehicle %s", vehicle_id)
 
         # Check if entry already exists for this vehicle
         await self.async_set_unique_id(vehicle_id)

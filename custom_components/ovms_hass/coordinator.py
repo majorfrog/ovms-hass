@@ -352,7 +352,7 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         """
         label = label or command
         vid = self.vehicle_id
-        _LOGGER.info("Coordinator: Sending %s (%s)", label, command)
+        _LOGGER.debug("Coordinator: Sending %s (%s)", label, command)
 
         for attempt in (1, 2):
             if not await self._ensure_protocol_connection():
@@ -386,7 +386,7 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
                 self.ovms_client.start_reconnect()
                 raise OVMSCommandError(f"{vid} did not acknowledge {label}")
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Coordinator: Command response: code=%s, result=%s, message=%s",
                 response.get("code"),
                 response.get("result"),
@@ -400,7 +400,7 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
                 _LOGGER.error("Coordinator: %s rejected (%s)", label, reason)
                 raise OVMSCommandError(f"{vid} rejected {label} ({reason})")
 
-            _LOGGER.info("Coordinator: %s acknowledged", label)
+            _LOGGER.debug("Coordinator: %s acknowledged", label)
             if refresh:
                 self._async_schedule_command_refresh()
             return response
@@ -428,12 +428,12 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         async with client._reconnect_lock:
             if client.connected and client.authenticated:
                 return True
-            _LOGGER.info("Coordinator: Protocol v2 connection is down, attempting reconnect...")
+            _LOGGER.debug("Coordinator: Protocol v2 connection is down, attempting reconnect...")
             try:
                 await client.disconnect(intentional=False)
                 await client.connect()
                 client.start_background_reader()
-                _LOGGER.info("Coordinator: Protocol v2 reconnected successfully")
+                _LOGGER.debug("Coordinator: Protocol v2 reconnected successfully")
                 return True
             except (OVMSConnectionError, OVMSAPIError) as err:
                 _LOGGER.error("Coordinator: Failed to reconnect Protocol v2: %s", err)
@@ -647,7 +647,7 @@ class OVMSProtocolClient:
             self._reader = reader
             self._writer = writer
             self.connected = True
-            _LOGGER.info("Connected to OVMS server %s:%d", self.host, self.port)
+            _LOGGER.debug("Connected to OVMS server %s:%d", self.host, self.port)
 
             # Generate client token - 22 random Base64 characters
             import base64
@@ -742,7 +742,7 @@ class OVMSProtocolClient:
             self.authenticated = True
             self._last_received = asyncio.get_running_loop().time()
 
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Successfully authenticated with OVMS server for vehicle %s",
                 self.vehicle_id,
             )
@@ -825,12 +825,12 @@ class OVMSProtocolClient:
         # Start the reader loop
         if self._reader_task is None or self._reader_task.done():
             self._reader_task = asyncio.ensure_future(self._background_reader_loop())
-            _LOGGER.info("Background reader loop started")
+            _LOGGER.debug("Background reader loop started")
 
         # Start the ping timer
         if self._ping_task is None or self._ping_task.done():
             self._ping_task = asyncio.ensure_future(self._ping_loop())
-            _LOGGER.info("Ping keepalive started (interval: %ds)", PING_INTERVAL)
+            _LOGGER.debug("Ping keepalive started (interval: %ds)", PING_INTERVAL)
 
     async def _background_reader_loop(self) -> None:
         """Continuously read and process messages from the OVMS server.

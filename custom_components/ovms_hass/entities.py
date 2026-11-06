@@ -161,7 +161,7 @@ class ACOnButton(OVMSEntity, ButtonEntity):
 
         _LOGGER.debug("Sending AC ON command (26,1)")
         await self.coordinator.async_send_command("26,1", "AC ON")
-        _LOGGER.info("AC ON command sent successfully")
+        _LOGGER.debug("AC ON command sent successfully")
         self.coordinator.async_schedule_hvac_followup()
 
 
@@ -199,7 +199,7 @@ class ACOffButton(OVMSEntity, ButtonEntity):
 
         _LOGGER.debug("Sending AC OFF command (26,0)")
         await self.coordinator.async_send_command("26,0", "AC OFF")
-        _LOGGER.info("AC OFF command sent successfully")
+        _LOGGER.debug("AC OFF command sent successfully")
         self.coordinator.async_schedule_hvac_followup()
 
 
@@ -1073,7 +1073,7 @@ class RefreshButton(OVMSEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press - refresh vehicle data immediately."""
-        _LOGGER.info("Manual refresh requested for vehicle %s", self.vehicle_id)
+        _LOGGER.debug("Manual refresh requested for vehicle %s", self.vehicle_id)
         await self.coordinator.async_request_refresh()
 
 
@@ -1096,7 +1096,7 @@ class WakeUpButton(OVMSEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press - send wake-up command to vehicle."""
-        _LOGGER.info("Sending wake-up command to vehicle %s", self.vehicle_id)
+        _LOGGER.debug("Sending wake-up command to vehicle %s", self.vehicle_id)
         # The coordinator refreshes a few seconds after the ack, which also
         # gives the vehicle time to wake up.
         await self.coordinator.async_send_command("18", "wake-up")
@@ -1123,7 +1123,7 @@ class HomeLinkButton(OVMSEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press - activate HomeLink."""
-        _LOGGER.info(
+        _LOGGER.debug(
             "Activating HomeLink %d for vehicle %s",
             self.button_number + 1,
             self.vehicle_id,
@@ -1152,10 +1152,10 @@ class ModuleResetButton(OVMSEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press - reset OVMS module."""
-        _LOGGER.info("Resetting OVMS module for vehicle %s", self.vehicle_id)
+        _LOGGER.debug("Resetting OVMS module for vehicle %s", self.vehicle_id)
         await self.coordinator.async_send_command("5", "module reset", refresh=False)
         # Module will restart, don't refresh immediately
-        _LOGGER.info("Module reset command sent, module will restart")
+        _LOGGER.debug("Module reset command sent, module will restart")
 
 
 class VehicleTracker(OVMSEntity, TrackerEntity):
@@ -2064,5 +2064,5 @@ class TPMSResetButton(OVMSEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press - reset TPMS mapping."""
-        _LOGGER.info("Resetting TPMS mapping for vehicle %s", self.vehicle_id)
+        _LOGGER.debug("Resetting TPMS mapping for vehicle %s", self.vehicle_id)
         await self.coordinator.async_send_command("7,tpms map reset", "TPMS auto-learn")
