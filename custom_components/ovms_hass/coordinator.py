@@ -38,6 +38,7 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_SCAN_INTERVAL = 300  # 5 minutes
 COMMAND_TIMEOUT = 10  # seconds
 SEND_TIMEOUT = 5  # seconds allowed for flushing a command to the socket
+CONNECT_TIMEOUT = 15  # seconds for TCP/TLS connect plus the login handshake
 PING_INTERVAL = 120  # 2 minutes
 RECONNECT_DELAY = 3  # seconds before reconnect attempt
 
@@ -508,6 +509,38 @@ class OVMSProtocolClient:
         self.on_protocol_data: Callable[[dict[str, Any]], None] | None = None
 
     async def connect(self) -> None:
+        """Connect and authenticate within CONNECT_TIMEOUT seconds.
+
+        Commands wait for a running reconnect, so a connect without a limit
+        (an unreachable server can take minutes to refuse) would stall them.
+
+        Raises:
+            OVMSConnectionError: If connection or authentication fails or
+                takes longer than CONNECT_TIMEOUT
+        """
+        try:
+            async with asyncio.timeout(CONNECT_TIMEOUT):
+                await self._connect()
+        except TimeoutError as err:
+            self._abort_connect()
+            raise OVMSConnectionError(
+                f"Timed out after {CONNECT_TIMEOUT}s connecting to "
+                f"{self.host}:{self.port}"
+            ) from err
+        except BaseException:
+            self._abort_connect()
+            raise
+
+    def _abort_connect(self) -> None:
+        """Close the socket of a connect attempt that failed."""
+        if self._writer:
+            self._writer.close()
+        self._reader = None
+        self._writer = None
+        self.connected = False
+        self.authenticated = False
+
+    async def _connect(self) -> None:
         """Establish connection to OVMS server and authenticate.
 
         1. Client connects to server

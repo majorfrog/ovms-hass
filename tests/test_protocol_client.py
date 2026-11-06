@@ -185,3 +185,46 @@ async def test_ping_failure_starts_reconnect() -> None:
 
     assert client.connected is False
     client.start_reconnect.assert_called_once()
+
+
+async def _hang(*_args, **_kwargs):
+    await asyncio.Event().wait()
+
+
+async def test_connect_times_out_when_server_unreachable() -> None:
+    """A hanging TCP connect must fail fast, or commands queue for minutes."""
+    client = OVMSProtocolClient("h", "u", "p", "APA123", use_tls=False)
+
+    with (
+        patch.object(coordinator_module, "CONNECT_TIMEOUT", 0.05),
+        patch.object(coordinator_module.asyncio, "open_connection", _hang),
+        pytest.raises(coordinator_module.OVMSConnectionError),
+    ):
+        async with asyncio.timeout(2):
+            await client.connect()
+
+    assert not client.connected
+
+
+async def test_connect_times_out_when_login_reply_never_comes() -> None:
+    """The whole connect, including the login reply, is under one timeout."""
+    client = OVMSProtocolClient("h", "u", "p", "APA123", use_tls=False)
+    reader = MagicMock()
+    reader.readline = _hang
+    writer = MagicMock()
+    writer.drain = AsyncMock()
+
+    with (
+        patch.object(coordinator_module, "CONNECT_TIMEOUT", 0.05),
+        patch.object(
+            coordinator_module.asyncio,
+            "open_connection",
+            AsyncMock(return_value=(reader, writer)),
+        ),
+        pytest.raises(coordinator_module.OVMSConnectionError),
+    ):
+        async with asyncio.timeout(2):
+            await client.connect()
+
+    assert not client.connected
+    writer.close.assert_called_once()
