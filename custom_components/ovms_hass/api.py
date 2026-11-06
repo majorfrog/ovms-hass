@@ -443,9 +443,11 @@ class OVMSApiClient:
         if self.session_id:
             cookies["ovmsapisession"] = self.session_id
 
-        _LOGGER.debug("Making %s request to %s", method, url)
         _LOGGER.debug(
-            "Session ID: %s", self.session_id[:20] if self.session_id else "None"
+            "Making %s request to %s (session: %s)",
+            method,
+            url,
+            "yes" if self.session_id else "no",
         )
 
         try:
@@ -534,12 +536,7 @@ class OVMSApiClient:
                 if "ovmsapisession" in cookies:
                     self.session_id = cookies["ovmsapisession"].value
                     if self.session_id:
-                        _LOGGER.debug(
-                            "Successfully obtained session ID: %s",
-                            self.session_id[:20]
-                            if len(self.session_id) > 20
-                            else self.session_id,
-                        )
+                        _LOGGER.debug("Obtained OVMS session cookie")
                 else:
                     # If no session cookie, try to get it from response headers
                     set_cookie = response.headers.get("Set-Cookie", "")
@@ -550,10 +547,7 @@ class OVMSApiClient:
                             self.session_id = match.group(1)
                             if self.session_id:
                                 _LOGGER.debug(
-                                    "Successfully obtained session ID from Set-Cookie: %s",
-                                    self.session_id[:20]
-                                    if len(self.session_id) > 20
-                                    else self.session_id,
+                                    "Obtained OVMS session cookie from Set-Cookie"
                                 )
 
                     if not self.session_id:

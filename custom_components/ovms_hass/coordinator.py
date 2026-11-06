@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import ssl
 from contextlib import suppress
 from datetime import timedelta
@@ -644,15 +645,15 @@ class OVMSProtocolClient:
             _LOGGER.info("Connected to OVMS server %s:%d", self.host, self.port)
 
             # Generate client token - 22 random Base64 characters
-            import random
             import base64
 
             b64_chars = (
                 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
             )
-            client_token = "".join(random.choice(b64_chars) for _ in range(22))
+            client_token = "".join(secrets.choice(b64_chars) for _ in range(22))
             self._token = client_token
-            _LOGGER.debug("Generated client token: %s", client_token)
+            # Tokens, digests and key material are never logged: a token with
+            # its digest allows an offline guess of the vehicle password.
 
             # Calculate client digest using HMAC-MD5
             # Key = password (UTF-8), Message = client_token as bytes
@@ -661,19 +662,13 @@ class OVMSProtocolClient:
             client_token_bytes = client_token.encode("utf-8")
             client_hmac = hmac.new(auth_key, client_token_bytes, hashlib.md5)
             client_digest = base64.b64encode(client_hmac.digest()).decode("ascii")
-            _LOGGER.debug("Generated client digest: %s", client_digest)
 
             # CLIENT sends first (this is the key difference from old implementation!)
             # Format: "MP-A 0 <client_token> <client_digest> <vehicle_id>"
             auth_request = (
                 f"MP-A 0 {client_token} {client_digest} {self.vehicle_id}\r\n"
             )
-            _LOGGER.debug(
-                "Sending auth request: MP-A 0 %s %s %s",
-                client_token,
-                client_digest,
-                self.vehicle_id,
-            )
+            _LOGGER.debug("Sending auth request for vehicle %s", self.vehicle_id)
             writer.write(auth_request.encode("utf-8"))
             await writer.drain()
 
@@ -689,24 +684,22 @@ class OVMSProtocolClient:
             # Parse only the first line of response
             response_str = response.decode("utf-8", errors="replace").strip()
             first_line = response_str.split("\n")[0].strip()
-            _LOGGER.debug("Server response (first line): %s", first_line)
 
             # Parse space-separated response
             parts = first_line.split()
-            _LOGGER.debug("Response parts: %s", parts)
 
             # Server responds with MP-S (Server) or MP-A (Authentication)
             if len(parts) < 4 or parts[0] not in ("MP-A", "MP-S") or parts[1] != "0":
+                # Only the header: the rest may hold a token and digest.
                 raise OVMSConnectionError(
-                    f"Invalid server response format: {first_line}"
+                    "Invalid server auth response: "
+                    f"{' '.join(parts[:2])!r} with {len(parts)} fields"
                 )
 
             # Format: MP-S 0 <server_token> <server_digest>
             server_token = parts[2]
             server_digest = parts[3]
 
-            _LOGGER.debug("Server token: %s", server_token)
-            _LOGGER.debug("Server digest: %s", server_digest)
 
             # Verify server's digest (Base64 encoded HMAC-MD5)
             # Server digest = Base64(HMAC-MD5(password, server_token))
@@ -716,9 +709,9 @@ class OVMSProtocolClient:
 
             if server_digest != expected_server_digest:
                 _LOGGER.warning(
-                    "Server digest mismatch! Expected %s, got %s",
-                    expected_server_digest,
-                    server_digest,
+                    "OVMS server %s sent a wrong auth digest (wrong vehicle "
+                    "password, or not the real server)",
+                    self.host,
                 )
                 # Some servers may not send correct digest, continue anyway
 
@@ -729,7 +722,6 @@ class OVMSProtocolClient:
             crypto_key = hmac.new(
                 auth_key, server_client_token.encode("utf-8"), hashlib.md5
             ).digest()
-            _LOGGER.debug("Derived crypto key from: %s", server_client_token)
 
             # Initialize RC4 ciphers (same key for both directions)
             self._tx_cipher = RC4(crypto_key)
