@@ -40,6 +40,9 @@ COMMAND_TIMEOUT = 10  # seconds
 SEND_TIMEOUT = 5  # seconds allowed for flushing a command to the socket
 CONNECT_TIMEOUT = 15  # seconds for TCP/TLS connect plus the login handshake
 PING_INTERVAL = 120  # 2 minutes
+# The server answers every ping with 'a', so silence this long means the
+# connection is dead even if writes still succeed (half-open TCP).
+STALE_TIMEOUT = PING_INTERVAL + 60
 RECONNECT_DELAY = 3  # seconds before reconnect attempt
 
 # Seconds after AC ON/OFF at which v.e.hvac is queried
@@ -502,6 +505,8 @@ class OVMSProtocolClient:
         # Lock and task for automatic reconnect on unexpected disconnects
         self._reconnect_lock: asyncio.Lock = asyncio.Lock()
         self._reconnect_task: asyncio.Task | None = None
+        # Event loop time of the last line received from the server
+        self._last_received: float = 0.0
         self._auto_reconnect_enabled = True
         # Data parsed from Protocol v2 messages (F, D, etc.)
         self.protocol_data: dict[str, Any] = {}
@@ -684,6 +689,7 @@ class OVMSProtocolClient:
             _LOGGER.debug("Primed RC4 ciphers with 1024 zero bytes")
 
             self.authenticated = True
+            self._last_received = asyncio.get_running_loop().time()
 
             _LOGGER.info(
                 "Successfully authenticated with OVMS server for vehicle %s",
@@ -794,6 +800,7 @@ class OVMSProtocolClient:
                         # EOF - connection closed by server
                         _LOGGER.warning("Background reader: Connection closed by server (EOF)")
                         break
+                    self._last_received = asyncio.get_running_loop().time()
 
                     response = data.decode("utf-8").strip()
                     if not response:
@@ -829,9 +836,11 @@ class OVMSProtocolClient:
                     elif msg_type == "D":
                         # Environment/doors - parse for HVAC, etc.
                         self._parse_environment_message(payload)
-                    elif msg_type in ("S", "T", "L", "a"):
+                    elif msg_type == "a":
+                        _LOGGER.debug("Background reader: Ping ack")
+                    elif msg_type in ("S", "T", "L"):
                         # High-frequency messages (status, timestamp,
-                        # location, ping ack) — processed silently to keep RC4
+                        # location) — processed silently to keep RC4
                         # cipher in sync without spamming the log.
                         pass
                     elif msg_type == "P":
@@ -1045,13 +1054,26 @@ class OVMSProtocolClient:
     async def _ping_loop(self) -> None:
         """Send periodic ping messages to keep the connection alive.
 
-        Sends 'MP-0 A' every 5 minutes. This prevents
-        NAT/firewall timeouts from silently killing the TCP connection.
+        Sends 'MP-0 A' every PING_INTERVAL. This prevents NAT/firewall
+        timeouts from silently killing the TCP connection. Before each ping,
+        a connection that has received nothing for STALE_TIMEOUT is treated
+        as dead and reconnected: on a half-open socket writes keep
+        succeeding, so only the silence shows it.
         """
         try:
             while self.connected:
                 await asyncio.sleep(PING_INTERVAL)
                 if not self.connected or not self._writer:
+                    break
+                silent_for = asyncio.get_running_loop().time() - self._last_received
+                if silent_for > STALE_TIMEOUT:
+                    _LOGGER.warning(
+                        "Nothing received from the OVMS server for %d s, reconnecting",
+                        silent_for,
+                    )
+                    self.connected = False
+                    self.authenticated = False
+                    self.start_reconnect()
                     break
                 try:
                     _LOGGER.debug("Sending ping (MP-0 A)")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -269,3 +270,58 @@ async def test_reconnect_outage_warns_once_and_logs_recovery(
         r.levelname == "INFO" and "restored" in r.getMessage() for r in caplog.records
     )
     assert not [r for r in caplog.records if r.exc_info]
+
+
+async def _run_ping_loop_briefly(client: OVMSProtocolClient) -> None:
+    task = asyncio.create_task(client._ping_loop())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+async def test_silent_server_triggers_reconnect() -> None:
+    """With nothing received for STALE_TIMEOUT, the connection is treated as dead."""
+    client, writer = make_client()
+    client._last_received = asyncio.get_running_loop().time() - 1000
+
+    with (
+        patch.object(coordinator_module, "PING_INTERVAL", 0.01),
+        patch.object(client, "start_reconnect") as start_reconnect,
+    ):
+        await _run_ping_loop_briefly(client)
+
+    start_reconnect.assert_called_once()
+    assert not client.connected
+    writer.write.assert_not_called()
+
+
+async def test_recent_data_keeps_pinging() -> None:
+    """A server that sent something recently gets a ping, not a reconnect."""
+    client, writer = make_client()
+    client._last_received = asyncio.get_running_loop().time()
+
+    with (
+        patch.object(coordinator_module, "PING_INTERVAL", 0.01),
+        patch.object(client, "start_reconnect") as start_reconnect,
+    ):
+        await _run_ping_loop_briefly(client)
+
+    start_reconnect.assert_not_called()
+    assert client.connected
+    assert writer.write.call_args.args[0].startswith(b"MP-0 A")
+
+
+async def test_reader_records_time_of_last_message() -> None:
+    """Every received line counts as a sign of life."""
+    client, _writer = make_client()
+    client._rx_cipher = RC4(b"k")
+    client._decrypt_message = lambda message: "MP-0 a"
+    client._reader = MagicMock()
+    client._reader.readline = AsyncMock(side_effect=[b"x\r\n", b""])
+    client._last_received = 0.0
+
+    with patch.object(client, "start_reconnect"):
+        await client._background_reader_loop()
+
+    assert client._last_received > 0.0
