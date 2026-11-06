@@ -106,75 +106,57 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         Returns:
             Dictionary containing all vehicle data
 
+        A section whose fetch fails keeps its previous values, so one failed
+        request doesn't blank its sensors until the next poll.
+
         Raises:
-            UpdateFailed: If connection to OVMS fails
+            UpdateFailed: If every REST fetch fails
         """
-        try:
-            # Fetch vehicle status data in parallel for efficiency
-            status_task = self.api_client.get_status(self.vehicle_id)
-            charge_task = self.api_client.get_charge(self.vehicle_id)
-            location_task = self.api_client.get_location(self.vehicle_id)
-            tpms_task = self.api_client.get_tpms(self.vehicle_id)
-            features_task = self._fetch_features()
-            vehicle_task = self._fetch_vehicle_connection()
-
-            status, charge, location, tpms, features, vehicle = await asyncio.gather(
-                status_task,
-                charge_task,
-                location_task,
-                tpms_task,
-                features_task,
-                vehicle_task,
-                return_exceptions=True,
+        vid = self.vehicle_id
+        fetches = {
+            "status": self.api_client.get_status(vid),
+            "charge": self.api_client.get_charge(vid),
+            "location": self.api_client.get_location(vid),
+            "tpms": self.api_client.get_tpms(vid),
+            "vehicle": self._fetch_vehicle_connection(),
+        }
+        results = dict(
+            zip(
+                fetches,
+                await asyncio.gather(*fetches.values(), return_exceptions=True),
             )
+        )
 
-            # Update data dictionary with results, filtering out exceptions
-            self.data["status"] = (
-                status.__dict__ if not isinstance(status, Exception) else {}
-            )
-            self.data["charge"] = (
-                charge.__dict__ if not isinstance(charge, Exception) else {}
-            )
-            self.data["location"] = (
-                location.__dict__ if not isinstance(location, Exception) else {}
-            )
-            self.data["tpms"] = tpms.__dict__ if not isinstance(tpms, Exception) else {}
-            self.data["features"] = (
-                features if not isinstance(features, Exception) else {}
-            )
-            self.data["vehicle"] = vehicle if not isinstance(vehicle, Exception) else {}
+        failed = {
+            name: result
+            for name, result in results.items()
+            if isinstance(result, Exception)
+        }
+        if len(failed) == len(results):
+            raise UpdateFailed(f"All OVMS requests failed: {failed['status']}")
 
-            # Merge data from Protocol v2 messages (F, D, etc.)
-            # These fill in fields not available via the REST API
-            # (e.g., HVAC from D message, GSM signal from F message)
-            if self.ovms_client and self.ovms_client.protocol_data:
-                for key, value in self.ovms_client.protocol_data.items():
-                    if value is not None:
-                        self.data["status"][key] = value
+        for name, result in results.items():
+            if name in failed:
+                _LOGGER.debug(
+                    "Failed to fetch %s for %s, keeping previous values: %s",
+                    name,
+                    vid,
+                    result,
+                )
+                continue
+            self.data[name] = result if isinstance(result, dict) else result.__dict__
 
-            # Log any exceptions that occurred (not as errors, just debug)
-            for task_name, result in [
-                ("status", status),
-                ("charge", charge),
-                ("location", location),
-                ("tpms", tpms),
-                ("features", features),
-                ("vehicle", vehicle),
-            ]:
-                if isinstance(result, Exception):
-                    _LOGGER.debug(
-                        "Failed to fetch %s for %s: %s",
-                        task_name,
-                        self.vehicle_id,
-                        result,
-                    )
+        self.data["features"] = await self._fetch_features()
 
-            return self.data
+        # Merge data from Protocol v2 messages (F, D, etc.)
+        # These fill in fields not available via the REST API
+        # (e.g., HVAC from D message, GSM signal from F message)
+        if self.ovms_client and self.ovms_client.protocol_data:
+            for key, value in self.ovms_client.protocol_data.items():
+                if value is not None:
+                    self.data["status"][key] = value
 
-        except OVMSConnectionError as err:
-            raise UpdateFailed(f"Connection to OVMS failed: {err}") from err
-        except OVMSAPIError as err:
-            raise UpdateFailed(f"OVMS API error: {err}") from err
+        return self.data
 
     @callback
     def async_handle_protocol_data(self, changed: dict[str, Any]) -> None:
@@ -270,22 +252,19 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
 
         Returns:
             Dictionary with v_net_connected, v_apps_connected, v_btcs_connected
+
+        Raises:
+            OVMSConnectionError, OVMSAPIError: If the request fails. The poll
+                then keeps the previous values instead of showing the car as
+                disconnected.
         """
-        try:
-            # The /api/vehicle/<VEHICLEID> endpoint returns connection info
-            response = await self.api_client.get_vehicle(self.vehicle_id)
-            return {
-                "v_net_connected": response.get("v_net_connected", 0),
-                "v_apps_connected": response.get("v_apps_connected", 0),
-                "v_btcs_connected": response.get("v_btcs_connected", 0),
-            }
-        except (OVMSConnectionError, OVMSAPIError) as err:
-            _LOGGER.debug("Failed to fetch vehicle connection: %s", err)
-            return {
-                "v_net_connected": 0,
-                "v_apps_connected": 0,
-                "v_btcs_connected": 0,
-            }
+        # The /api/vehicle/<VEHICLEID> endpoint returns connection info
+        response = await self.api_client.get_vehicle(self.vehicle_id)
+        return {
+            "v_net_connected": response.get("v_net_connected", 0),
+            "v_apps_connected": response.get("v_apps_connected", 0),
+            "v_btcs_connected": response.get("v_btcs_connected", 0),
+        }
 
     async def async_send_command(
         self, command: str, label: str | None = None
