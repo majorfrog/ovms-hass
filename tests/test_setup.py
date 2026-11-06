@@ -8,7 +8,9 @@ import aiohttp
 import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ovms_hass.api import (
@@ -173,3 +175,48 @@ async def test_disconnect_closes_session_when_logout_fails() -> None:
 
     session.close.assert_awaited_once()
     assert client.session is None
+
+
+def _working_clients() -> tuple[MagicMock, MagicMock]:
+    """API and protocol client mocks for a setup that succeeds."""
+    from .test_poll import _api
+
+    api = _api()
+    api.connect = AsyncMock()
+    api.disconnect = AsyncMock()
+    protocol = _protocol_client()
+    protocol.protocol_data = {}
+    return api, protocol
+
+
+async def test_services_registered_by_async_setup(hass: HomeAssistant) -> None:
+    """Services exist once the integration is set up, entry or not."""
+    assert await async_setup_component(hass, "ovms_hass", {})
+
+    services = hass.services.async_services_for_domain("ovms_hass")
+    assert "send_command" in services
+    assert "set_feature" in services
+    assert "get_feature" not in services
+    assert "get_parameter" not in services
+
+
+async def test_setup_removes_stale_gps_interval_entity(hass: HomeAssistant) -> None:
+    """The removed GPS interval number must not linger as 'not provided'."""
+    entry = _entry(hass)
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "number",
+        "ovms_hass",
+        "ovms_APA123_gps_streaming_interval",
+        config_entry=entry,
+    )
+
+    await _setup(hass, entry, *_working_clients())
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert (
+        registry.async_get_entity_id(
+            "number", "ovms_hass", "ovms_APA123_gps_streaming_interval"
+        )
+        is None
+    )

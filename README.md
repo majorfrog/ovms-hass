@@ -42,7 +42,7 @@ This integration provides seamless Home Assistant support for OVMS-equipped vehi
 | `lock`           | 1     | Door Locks (lock/unlock)                                                                                        |
 | `device_tracker` | 1     | GPS Location with accuracy (SOC has its own sensor)                                                             |
 | `switch`         | 2     | Cooldown, Valet Mode                                                                                            |
-| `number`         | 3     | Charge Limit (50-100%), Charge Current, GPS Interval                                                            |
+| `number`         | 2     | Charge Limit (50-100%), Charge Current                                                                          |
 | `binary_sensor`  | 14    | Doors, Bonnet, Trunk, Charge Port, Parking Brake, Pilot Present, Car On, Headlights, Alarm, GPS Lock, CAN Write |
 | `sensor`         | 50+   | Battery, Charging, Temperature, Power, Location, Diagnostics                                                    |
 | `button`         | 8     | Refresh, Wake Up, AC On, HomeLink 1-3, Module Reset, TPMS Reset                                                 |
@@ -118,15 +118,15 @@ This integration provides seamless Home Assistant support for OVMS-equipped vehi
 
 #### Services
 
-Nine advanced services for vehicle control:
+Seven advanced services for vehicle control:
 
 - `ovms_hass.send_command` - Send generic OVMS commands
 - `ovms_hass.send_sms` - Send SMS via vehicle modem
 - `ovms_hass.set_charge_timer` - Configure charging schedule
 - `ovms_hass.wakeup_subsystem` - Wake specific vehicle subsystem
 - `ovms_hass.tpms_map_wheel` - Map TPMS sensor to wheel position
-- `ovms_hass.get_feature` / `ovms_hass.set_feature` - Module features (0-15)
-- `ovms_hass.get_parameter` / `ovms_hass.set_parameter` - Module parameters (0-31)
+- `ovms_hass.set_feature` - Set a module feature (0-15), e.g. the GPS streaming interval
+- `ovms_hass.set_parameter` - Set a module parameter (0-31)
 
 ## Installation
 
@@ -202,7 +202,7 @@ Settings → Devices & Services → Add Integration → Search "OVMS"
 
 ## Services
 
-The integration provides nine advanced services for direct OVMS control:
+The integration provides seven advanced services for direct OVMS control:
 
 ### ovms_hass.send_command
 
@@ -281,9 +281,9 @@ data:
   sensor_id: "12345678"
 ```
 
-### ovms_hass.get_feature / ovms_hass.set_feature
+### ovms_hass.set_feature
 
-Read or write OVMS module features (0-15).
+Set an OVMS module feature (0-15).
 
 ```yaml
 service: ovms_hass.set_feature
@@ -293,9 +293,24 @@ data:
   value: "60"
 ```
 
-### ovms_hass.get_parameter / ovms_hass.set_parameter
+#### GPS streaming
 
-Read or write OVMS module parameters (0-31).
+Feature 8 is the GPS streaming interval in seconds while driving (`0` turns
+streaming off). Streaming sends a position update that often and uses mobile
+data. Earlier versions had a "GPS Streaming Interval" number entity, but it
+could never show the current value and was removed.
+
+- **Set it** with `set_feature` as above, or with the module's shell
+  command: `send_command` with `command: "config set vehicle stream 60"`
+  (OVMS v3 modules).
+- **Read it** with `send_command` and `command: "config list vehicle"`. The
+  output, including `stream`, comes back as the service response (see
+  `send_command` above).
+
+### ovms_hass.set_parameter
+
+Set an OVMS module parameter (0-31). To read parameters, use `send_command`
+with the module's shell commands, e.g. `config list <param>` on OVMS v3.
 
 ```yaml
 service: ovms_hass.set_parameter
@@ -508,11 +523,11 @@ automation:
       entity_id: device_tracker.my_tesla_location
       from: "home"
     action:
-      service: number.set_value
-      target:
-        entity_id: number.my_tesla_gps_streaming_interval
+      service: ovms_hass.set_feature
       data:
-        value: 60 # Update every 60 seconds
+        vehicle_id: "DEMO"
+        feature_number: 8 # GPS streaming interval (see "GPS streaming")
+        value: "60" # Update every 60 seconds while driving
 ```
 
 ### Advanced: Send Custom Command

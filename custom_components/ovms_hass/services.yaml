@@ -130,28 +130,6 @@ tpms_map_wheel:
       selector:
         text:
 
-get_feature:
-  name: Get Feature
-  description: Get the value of an OVMS module feature.
-  fields:
-    vehicle_id:
-      name: Vehicle ID
-      description: The OVMS vehicle ID.
-      required: true
-      example: "DEMO"
-      selector:
-        text:
-    feature_number:
-      name: Feature Number
-      description: The feature number (0-15).
-      required: true
-      example: 0
-      selector:
-        number:
-          min: 0
-          max: 15
-          mode: box
-
 set_feature:
   name: Set Feature
   description: Set the value of an OVMS module feature.
@@ -180,28 +158,6 @@ set_feature:
       example: "1"
       selector:
         text:
-
-get_parameter:
-  name: Get Parameter
-  description: Get the value of an OVMS module parameter.
-  fields:
-    vehicle_id:
-      name: Vehicle ID
-      description: The OVMS vehicle ID.
-      required: true
-      example: "DEMO"
-      selector:
-        text:
-    parameter_number:
-      name: Parameter Number
-      description: The parameter number (0-31).
-      required: true
-      example: 0
-      selector:
-        number:
-          min: 0
-          max: 31
-          mode: box
 
 set_parameter:
   name: Set Parameter

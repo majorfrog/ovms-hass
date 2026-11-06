@@ -42,7 +42,7 @@ def coordinator(hass: HomeAssistant) -> OVMSDataCoordinator:
     client = MagicMock(spec=OVMSProtocolClient)
     client.connected = True
     client.authenticated = True
-    client._auto_reconnect_enabled = True
+    client.async_ensure_connected = AsyncMock(return_value=True)
     client.async_command = AsyncMock(return_value=ACK)
     client.disconnect = AsyncMock()
     coord.ovms_client = client
@@ -118,17 +118,6 @@ async def test_no_client_raises(coordinator: OVMSDataCoordinator) -> None:
 
     with pytest.raises(OVMSCommandError, match="no connection to the OVMS server"):
         await coordinator.async_send_command("26,1", "AC ON")
-
-
-async def test_no_reconnect_after_unload(coordinator: OVMSDataCoordinator) -> None:
-    """After unload the coordinator must not open a new connection."""
-    client = coordinator.ovms_client
-    client.connected = False
-    client._auto_reconnect_enabled = False
-    client.connect = AsyncMock()
-
-    assert await coordinator._ensure_protocol_connection() is False
-    client.connect.assert_not_called()
 
 
 async def test_ac_on_button_raises(coordinator: OVMSDataCoordinator) -> None:
@@ -209,19 +198,6 @@ async def test_no_ack_starts_background_reconnect(
     with pytest.raises(OVMSCommandError):
         await coordinator.async_send_command("26,1", "AC ON")
     coordinator.ovms_client.start_reconnect.assert_called_once()
-
-
-async def test_failed_reconnect_starts_background_reconnect(
-    coordinator: OVMSDataCoordinator,
-) -> None:
-    """A failed on-demand reconnect hands over to the background loop."""
-    client = coordinator.ovms_client
-    client.connected = False
-    client._reconnect_lock = asyncio.Lock()
-    client.connect = AsyncMock(side_effect=OVMSConnectionError("down"))
-
-    assert await coordinator._ensure_protocol_connection() is False
-    client.start_reconnect.assert_called_once()
 
 
 async def _tick(hass: HomeAssistant, freezer, seconds: float) -> None:

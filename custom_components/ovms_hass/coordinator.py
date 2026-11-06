@@ -116,7 +116,6 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
             "charge": {},
             "location": {},
             "tpms": {},
-            "features": {},
             "vehicle": {},
         }
 
@@ -165,8 +164,6 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
                 )
                 continue
             self.data[name] = result if isinstance(result, dict) else result.__dict__
-
-        self.data["features"] = await self._fetch_features()
 
         # Merge data from Protocol v2 messages (F, D, etc.)
         # These fill in fields not available via the REST API
@@ -287,26 +284,6 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         if self._hvac_query_task and not self._hvac_query_task.done():
             self._hvac_query_task.cancel()
 
-    async def _fetch_features(self) -> dict[int, str]:
-        """Fetch vehicle features via command 1.
-
-        Returns:
-            Dictionary mapping feature slot to value
-        """
-        if not self.ovms_client:
-            return {}
-
-        try:
-            # Send command 1 to request features
-            # Response format: "MP-0 c1,0,fn,fm,fv" where fn=feature number, fm=max features, fv=value
-            # We'll parse the response to build features dict
-            # For now, return empty dict as feature parsing requires response handling
-            # This will be populated when we receive feature responses
-            return self.data.get("features", {})
-        except (OVMSConnectionError, OVMSAPIError) as err:
-            _LOGGER.debug("Failed to fetch features: %s", err)
-            return {}
-
     async def _fetch_vehicle_connection(self) -> dict[str, int]:
         """Fetch vehicle connection status from API.
 
@@ -355,7 +332,7 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Coordinator: Sending %s (%s)", label, command)
 
         for attempt in (1, 2):
-            if not await self._ensure_protocol_connection():
+            if not self.ovms_client or not await self.ovms_client.async_ensure_connected():
                 _LOGGER.error("Coordinator: No Protocol v2 connection, %s not sent", label)
                 raise OVMSCommandError(
                     f"{vid}: no connection to the OVMS server, {label} not sent"
@@ -407,41 +384,6 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
 
         _LOGGER.error("Coordinator: %s could not be sent after retry", label)
         raise OVMSCommandError(f"{vid}: {label} could not be sent")
-
-    async def _ensure_protocol_connection(self) -> bool:
-        """Ensure the Protocol v2 TCP connection is alive, reconnecting if needed.
-
-        Returns:
-            True if connected and authenticated
-        """
-        client = self.ovms_client
-        if not client:
-            return False
-
-        if client.connected and client.authenticated:
-            return True
-
-        if not client._auto_reconnect_enabled:
-            # Integration is unloading/unloaded: never open a new connection.
-            return False
-
-        async with client._reconnect_lock:
-            if client.connected and client.authenticated:
-                return True
-            _LOGGER.debug("Coordinator: Protocol v2 connection is down, attempting reconnect...")
-            try:
-                await client.disconnect(intentional=False)
-                await client.connect()
-                client.start_background_reader()
-                _LOGGER.debug("Coordinator: Protocol v2 reconnected successfully")
-                return True
-            except (OVMSConnectionError, OVMSAPIError) as err:
-                _LOGGER.error("Coordinator: Failed to reconnect Protocol v2: %s", err)
-            except Exception as err:
-                _LOGGER.exception("Coordinator: Unexpected error during reconnect: %s", err)
-        # The failed attempt cancelled any background loop; start it again.
-        client.start_reconnect()
-        return False
 
 
 def _parse_hvac_reply(message: str) -> bool | None:
@@ -549,7 +491,6 @@ class OVMSProtocolClient:
         self._writer: Any | None = None
         self._tx_cipher: RC4 | None = None
         self._rx_cipher: RC4 | None = None
-        self._token: str = ""
         # Background tasks
         self._reader_task: asyncio.Task | None = None
         self._ping_task: asyncio.Task | None = None
@@ -656,7 +597,6 @@ class OVMSProtocolClient:
                 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
             )
             client_token = "".join(secrets.choice(b64_chars) for _ in range(22))
-            self._token = client_token
             # Tokens, digests and key material are never logged: a token with
             # its digest allows an offline guess of the vehicle password.
 
@@ -922,11 +862,41 @@ class OVMSProtocolClient:
         self.connected = False
         self.authenticated = False
         self._wake_pending_command()
-        await self._schedule_reconnect()
-
-    async def _schedule_reconnect(self) -> None:
-        """Schedule automatic reconnect after an unexpected disconnect."""
         self.start_reconnect()
+
+    async def async_ensure_connected(self) -> bool:
+        """Make sure the connection is up, reconnecting now if needed.
+
+        Waits for a background reconnect that is running, so commands never
+        race it. After a failed attempt the background loop takes over.
+
+        Returns:
+            True if connected and authenticated
+        """
+        if self.connected and self.authenticated:
+            return True
+
+        if not self._auto_reconnect_enabled:
+            # Integration is unloading/unloaded: never open a new connection.
+            return False
+
+        async with self._reconnect_lock:
+            if self.connected and self.authenticated:
+                return True
+            _LOGGER.debug("Protocol v2 connection is down, reconnecting before the command")
+            try:
+                await self.disconnect(intentional=False)
+                await self.connect()
+                self.start_background_reader()
+                _LOGGER.debug("Protocol v2 reconnected")
+                return True
+            except (OVMSConnectionError, OVMSAPIError) as err:
+                _LOGGER.error("Failed to reconnect Protocol v2: %s", err)
+            except Exception as err:
+                _LOGGER.exception("Unexpected error during reconnect: %s", err)
+        # The failed attempt cancelled any background loop; start it again.
+        self.start_reconnect()
+        return False
 
     def start_reconnect(self) -> None:
         """Start the background reconnect loop unless it is running or disabled."""

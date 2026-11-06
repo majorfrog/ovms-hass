@@ -34,9 +34,9 @@ from homeassistant.const import (
     CONF_USERNAME,
     Platform,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .api import (
@@ -104,11 +104,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     Returns:
         True if setup was successful
     """
+    # Services look up the vehicle's entry at call time, so they are
+    # registered once here and live as long as HA.
+    await async_setup_services(hass)
+
     if DOMAIN not in config:
         return True
-
-    # Initialize hass.data storage
-    hass.data.setdefault(DOMAIN, {})
 
     # Store config for later use in import
     ovms_config = config[DOMAIN]
@@ -228,17 +229,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _async_close_clients(coordinator, api_client)
         raise
 
+    _async_remove_stale_entities(hass, entry, vehicle_id)
+
     # Forward entry to entity platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Register services (only once, check if already registered)
-    if not hass.services.has_service(DOMAIN, "send_command"):
-        await async_setup_services(hass)
 
     # Add listener for options updates
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
     return True
+
+
+# (domain, unique_id suffix) of entities that earlier versions created
+REMOVED_ENTITIES = (
+    # The module's feature list was never read, so it was always unknown.
+    # GPS streaming can be read and set with send_command instead (README).
+    ("number", "gps_streaming_interval"),
+)
+
+
+@callback
+def _async_remove_stale_entities(
+    hass: HomeAssistant, entry: ConfigEntry, vehicle_id: str
+) -> None:
+    """Remove registry entries of entities this version no longer provides."""
+    registry = er.async_get(hass)
+    safe_vehicle_id = "".join(c if c.isalnum() else "_" for c in vehicle_id)
+    for domain, suffix in REMOVED_ENTITIES:
+        entity_id = registry.async_get_entity_id(
+            domain, DOMAIN, f"ovms_{safe_vehicle_id}_{suffix}"
+        )
+        if entity_id:
+            registry.async_remove(entity_id)
 
 
 async def _async_close_clients(
@@ -338,35 +360,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     return unload_ok
-
-
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload a config entry.
-
-    Args:
-        hass: Home Assistant instance
-        entry: Config entry to reload
-    """
-    await async_unload_entry(hass, entry)
-    await async_setup_entry(hass, entry)
-
-
-async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
-    """Migrate config entry to newer version.
-
-    Args:
-        hass: Home Assistant instance
-        config_entry: Config entry to migrate
-
-    Returns:
-        True if migration successful
-    """
-    _LOGGER.debug("Migrating from version %s", config_entry.version)
-
-    if config_entry.version == 1:
-        # Version 1 to 2 migration (placeholder for future use)
-        # Currently no changes needed
-        pass
-
-    _LOGGER.debug("Migration to version %s successful", config_entry.version)
-    return True

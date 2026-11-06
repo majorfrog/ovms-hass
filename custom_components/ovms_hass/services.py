@@ -30,9 +30,7 @@ SERVICE_SEND_SMS = "send_sms"
 SERVICE_SET_CHARGE_TIMER = "set_charge_timer"
 SERVICE_WAKEUP_SUBSYSTEM = "wakeup_subsystem"
 SERVICE_TPMS_MAP_WHEEL = "tpms_map_wheel"
-SERVICE_GET_FEATURE = "get_feature"
 SERVICE_SET_FEATURE = "set_feature"
-SERVICE_GET_PARAMETER = "get_parameter"
 SERVICE_SET_PARAMETER = "set_parameter"
 
 # Service schemas
@@ -176,15 +174,6 @@ async def async_tpms_map_wheel(hass: HomeAssistant, call: ServiceCall) -> None:
     await coordinator.async_send_command(f"7,tpms map {wheel} {sensor_id}", "TPMS map")
 
 
-async def async_get_feature(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Request the module features (Command 1)."""
-    vehicle_id = call.data["vehicle_id"]
-    feature_number = call.data["feature_number"]
-    coordinator = _get_coordinator(hass, vehicle_id)
-    _LOGGER.debug("Getting feature %d for %s", feature_number, vehicle_id)
-    await coordinator.async_send_command("1", "get feature")
-
-
 async def async_set_feature(hass: HomeAssistant, call: ServiceCall) -> None:
     """Set a module feature (Command 2)."""
     vehicle_id = call.data["vehicle_id"]
@@ -195,15 +184,6 @@ async def async_set_feature(hass: HomeAssistant, call: ServiceCall) -> None:
     await coordinator.async_send_command(
         f"2,{feature_number},{value}", f"set feature {feature_number}"
     )
-
-
-async def async_get_parameter(hass: HomeAssistant, call: ServiceCall) -> None:
-    """Request the module parameters (Command 3)."""
-    vehicle_id = call.data["vehicle_id"]
-    parameter_number = call.data["parameter_number"]
-    coordinator = _get_coordinator(hass, vehicle_id)
-    _LOGGER.debug("Getting parameter %d for %s", parameter_number, vehicle_id)
-    await coordinator.async_send_command("3", "get parameter")
 
 
 async def async_set_parameter(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -226,9 +206,7 @@ SERVICES = (
     (SERVICE_SET_CHARGE_TIMER, async_set_charge_timer, SET_CHARGE_TIMER_SCHEMA),
     (SERVICE_WAKEUP_SUBSYSTEM, async_wakeup_subsystem, WAKEUP_SUBSYSTEM_SCHEMA),
     (SERVICE_TPMS_MAP_WHEEL, async_tpms_map_wheel, TPMS_MAP_WHEEL_SCHEMA),
-    (SERVICE_GET_FEATURE, async_get_feature, FEATURE_SCHEMA),
     (SERVICE_SET_FEATURE, async_set_feature, FEATURE_SCHEMA),
-    (SERVICE_GET_PARAMETER, async_get_parameter, PARAMETER_SCHEMA),
     (SERVICE_SET_PARAMETER, async_set_parameter, PARAMETER_SCHEMA),
 )
 
@@ -251,21 +229,3 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         )
 
     _LOGGER.debug("OVMS services registered")
-
-
-async def async_unload_services(hass: HomeAssistant) -> None:
-    """Unload OVMS services."""
-    services = [
-        SERVICE_SEND_COMMAND,
-        SERVICE_SEND_SMS,
-        SERVICE_SET_CHARGE_TIMER,
-        SERVICE_WAKEUP_SUBSYSTEM,
-        SERVICE_TPMS_MAP_WHEEL,
-        SERVICE_GET_FEATURE,
-        SERVICE_SET_FEATURE,
-        SERVICE_GET_PARAMETER,
-        SERVICE_SET_PARAMETER,
-    ]
-
-    for service in services:
-        hass.services.async_remove(DOMAIN, service)

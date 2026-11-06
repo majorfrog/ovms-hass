@@ -1004,56 +1004,6 @@ class ChargingCurrentNumber(OVMSEntity, NumberEntity):
         )
 
 
-class GPSStreamingIntervalNumber(OVMSEntity, NumberEntity):
-    """Number entity for setting GPS streaming interval (feature #8)."""
-
-    _attr_native_min_value = 0
-    _attr_native_max_value = 3600
-    _attr_native_step = 10
-    _attr_native_unit_of_measurement = "s"
-
-    def __init__(self, coordinator: Any, vehicle_id: str) -> None:
-        """Initialize GPS streaming interval number entity.
-
-        Args:
-            coordinator: Data coordinator
-            vehicle_id: OVMS vehicle ID
-        """
-        config = EntityConfig(
-            unique_id="gps_streaming_interval",
-            name="GPS Streaming Interval",
-            icon="mdi:map-marker-radius",
-        )
-        super().__init__(coordinator, config, vehicle_id)
-
-    @property
-    def native_value(self) -> int | None:
-        """Return current GPS streaming interval from feature #8."""
-        features = self.coordinator.data.get("features", {})
-        value = features.get(8)
-        if value is not None:
-            try:
-                return int(value)
-            except (ValueError, TypeError):
-                return None
-        return None
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Set GPS streaming interval using command 2.
-
-        Args:
-            value: Streaming interval in seconds
-        """
-        interval_int = int(value)
-        # Command 2 format: "2,<feature_slot>,<value>"
-        await self.coordinator.async_send_command(
-            f"2,8,{interval_int}", f"GPS interval {interval_int} s"
-        )
-        # Update local cache
-        features = self.coordinator.data.get("features", {})
-        features[8] = str(interval_int)
-
-
 class RefreshButton(OVMSEntity, ButtonEntity):
     """Button entity to manually refresh vehicle data."""
 

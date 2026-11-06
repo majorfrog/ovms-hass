@@ -325,3 +325,48 @@ async def test_reader_records_time_of_last_message() -> None:
         await client._background_reader_loop()
 
     assert client._last_received > 0.0
+
+
+async def test_ensure_connected_reconnects_when_down() -> None:
+    """A command on a dropped connection reconnects first."""
+    client = OVMSProtocolClient("h", "u", "p", "APA123")
+
+    async def _connect() -> None:
+        client.connected = True
+        client.authenticated = True
+
+    with (
+        patch.object(client, "connect", AsyncMock(side_effect=_connect)),
+        patch.object(client, "start_background_reader") as start_reader,
+    ):
+        assert await client.async_ensure_connected() is True
+
+    start_reader.assert_called_once()
+
+
+async def test_ensure_connected_refuses_after_unload() -> None:
+    """After unload no new connection may be opened."""
+    client = OVMSProtocolClient("h", "u", "p", "APA123")
+    await client.disconnect()  # intentional: what unload does
+
+    with patch.object(client, "connect", AsyncMock()) as connect:
+        assert await client.async_ensure_connected() is False
+
+    connect.assert_not_called()
+
+
+async def test_ensure_connected_failure_hands_over_to_background_loop() -> None:
+    """A failed on-demand reconnect starts the background reconnect loop."""
+    client = OVMSProtocolClient("h", "u", "p", "APA123")
+
+    with (
+        patch.object(
+            client,
+            "connect",
+            AsyncMock(side_effect=coordinator_module.OVMSConnectionError("down")),
+        ),
+        patch.object(client, "start_reconnect") as start_reconnect,
+    ):
+        assert await client.async_ensure_connected() is False
+
+    start_reconnect.assert_called_once()

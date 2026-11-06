@@ -10,7 +10,6 @@ from .coordinator import OVMSDataCoordinator
 from .entities import (
     ChargeLimitNumber,
     ChargingCurrentNumber,
-    GPSStreamingIntervalNumber,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,7 +26,6 @@ async def async_setup_entry(
     entities = [
         ChargeLimitNumber(coordinator, coordinator.vehicle_id),
         ChargingCurrentNumber(coordinator, coordinator.vehicle_id),
-        GPSStreamingIntervalNumber(coordinator, coordinator.vehicle_id),
     ]
 
     async_add_entities(entities)

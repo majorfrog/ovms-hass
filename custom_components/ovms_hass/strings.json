@@ -253,9 +253,6 @@
       },
       "charge_current": {
         "name": "Charge Current"
-      },
-      "gps_streaming_interval": {
-        "name": "GPS Streaming Interval"
       }
     },
     "button": {
