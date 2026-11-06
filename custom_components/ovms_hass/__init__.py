@@ -4,22 +4,12 @@ This integration provides Home Assistant support for OVMS (Open Vehicles Monitor
 It communicates with the OVMS server using REST API (HTTP/HTTPS) for data retrieval
 and the binary Protocol v2 (TCP/TLS) for real-time vehicle commands.
 
-Configuration via configuration.yaml:
-    ovms_hass:
-      host: api.openvehicles.com
-      port: 6869
-      username: your_username
-      password: your_rest_api_password
-      vehicles:
-        - vehicle_id: DEMO
-          name: My Vehicle
-          vehicle_password: your_vehicle_module_password
-          scan_interval: 300
+Set up through the UI (config flow). The old `ovms_hass:` YAML configuration
+is deprecated: it is imported once and a repair issue asks to remove it.
 """
 
 from __future__ import annotations
 
-from datetime import timedelta
 import logging
 from typing import Final
 
@@ -30,13 +20,16 @@ from homeassistant.const import (
     CONF_HOST,
     CONF_PASSWORD,
     CONF_PORT,
-    CONF_SCAN_INTERVAL,
     CONF_USERNAME,
     Platform,
 )
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv, entity_registry as er
+from homeassistant.core import DOMAIN as HOMEASSISTANT_DOMAIN, HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import (
+    config_validation as cv,
+    entity_registry as er,
+    issue_registry as ir,
+)
 from homeassistant.helpers.typing import ConfigType
 
 from .api import (
@@ -55,6 +48,8 @@ DEFAULT_HOST: Final = "api.openvehicles.com"
 DEFAULT_PORT: Final = 6869
 DEFAULT_SCAN_INTERVAL: Final = 300
 CONF_VEHICLE_PASSWORD: Final = "vehicle_password"
+# HA core's "YAML configuration is being removed" repair issue
+YAML_ISSUE_ID: Final = f"deprecated_yaml_{DOMAIN}"
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -92,10 +87,13 @@ CONFIG_SCHEMA = vol.Schema(
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up OVMS integration from configuration.yaml.
+    """Register the services and import deprecated YAML configuration.
 
-    Note: YAML configuration is imported as config entries.
-    This function validates configuration but actual setup happens via async_setup_entry.
+    YAML (`ovms_hass:` in configuration.yaml) is deprecated. Each vehicle in
+    it is imported once into a config entry, and HA's standard repair issue
+    asks the user to remove the YAML. An existing entry is never updated
+    from YAML: the entry, edited in the UI (reconfigure, reauth, options),
+    is the source of truth.
 
     Args:
         hass: Home Assistant instance
@@ -109,6 +107,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     await async_setup_services(hass)
 
     if DOMAIN not in config:
+        # The issue is stored; drop it once the YAML is gone.
+        ir.async_delete_issue(hass, HOMEASSISTANT_DOMAIN, YAML_ISSUE_ID)
         return True
 
     # Store config for later use in import
@@ -137,6 +137,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 data=entry_data,
             )
         )
+
+    ir.async_create_issue(
+        hass,
+        HOMEASSISTANT_DOMAIN,
+        YAML_ISSUE_ID,
+        issue_domain=DOMAIN,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="deprecated_yaml",
+        translation_placeholders={"domain": DOMAIN, "integration_title": "OVMS"},
+    )
 
     return True
 
@@ -169,7 +180,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await api_client.connect()
     except OVMSAuthenticationError as err:
-        raise ConfigEntryError(f"OVMS login failed: {err}") from err
+        # HA starts the reauth flow (config_flow.async_step_reauth)
+        raise ConfigEntryAuthFailed(f"OVMS login failed: {err}") from err
     except OVMSConnectionError as err:
         raise ConfigEntryNotReady(f"Cannot reach OVMS server {host}: {err}") from err
     _LOGGER.debug("Connected to OVMS server %s", host)
@@ -233,9 +245,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Forward entry to entity platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Add listener for options updates
-    entry.async_on_unload(entry.add_update_listener(async_update_options))
 
     return True
 
@@ -312,32 +321,6 @@ async def _async_connect_protocol(
     except Exception as err:
         _LOGGER.exception("Unexpected error connecting Protocol v2 client: %s", err)
         protocol_client.start_reconnect()
-
-
-async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Update options.
-
-    Args:
-        hass: Home Assistant instance
-        entry: Config entry with updated options
-    """
-    try:
-        # Update the coordinator's scan interval if it changed
-        coordinator: OVMSDataCoordinator = entry.runtime_data["coordinator"]
-
-        new_scan_interval = entry.options.get(
-            CONF_SCAN_INTERVAL,
-            entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-        )
-
-        if (
-            coordinator.update_interval
-            and coordinator.update_interval.total_seconds() != new_scan_interval
-        ):
-            coordinator.update_interval = timedelta(seconds=new_scan_interval)
-            await coordinator.async_request_refresh()
-    except (OVMSConnectionError, OVMSAPIError):
-        _LOGGER.exception("Error updating OVMS options")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

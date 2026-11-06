@@ -20,16 +20,45 @@
           "vehicle_id": "Vehicle ID to monitor (leave empty to auto-detect)",
           "vehicle_password": "The password configured in your OVMS module (for vehicle commands). If not set, server password will be used."
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-enter OVMS password",
+        "description": "The OVMS server {host} rejected the password for {username}. Enter the current server password. Enter the vehicle module password too if it has also changed.",
+        "data": {
+          "password": "Server Password",
+          "vehicle_password": "Vehicle Module Password (optional)"
+        },
+        "data_description": {
+          "password": "Your OVMS server account password (for REST API)",
+          "vehicle_password": "Leave empty to keep the stored one."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure OVMS connection",
+        "description": "Change the OVMS server connection for vehicle {vehicle_id}. The new settings are checked with a login before they are saved. The vehicle can't be changed here; add another vehicle as a new entry.",
+        "data": {
+          "host": "Server Host",
+          "port": "Server Port",
+          "username": "Username",
+          "password": "Password",
+          "vehicle_password": "Vehicle Module Password (optional)"
+        },
+        "data_description": {
+          "vehicle_password": "Leave empty to keep the stored one."
+        }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to OVMS server. Please check your host and port settings.",
       "invalid_auth": "Invalid username or password. Please check your credentials.",
       "missing_credentials": "Please provide all required credentials.",
-      "unknown": "Unexpected error occurred. Please check logs for more details."
+      "unknown": "Unexpected error occurred. Please check logs for more details.",
+      "vehicle_not_found": "This account doesn't have the vehicle. Use the account the vehicle belongs to, or add the other vehicle as a new entry."
     },
     "abort": {
-      "already_configured": "This OVMS vehicle is already configured."
+      "already_configured": "This OVMS vehicle is already configured.",
+      "reauth_successful": "The OVMS password was updated.",
+      "reconfigure_successful": "The OVMS connection was updated."
     }
   },
   "options": {

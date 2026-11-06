@@ -156,49 +156,50 @@ Seven advanced services for vehicle control:
 
 ## Configuration
 
-### UI Configuration (Recommended)
+### Setup
 
-1. Go to **Settings** → **Devices & Services**
-2. Click **Add Integration**
-3. Search for "OVMS"
-4. Enter your OVMS server credentials:
-   - **Server Host**: `api.openvehicles.com` (default)
-   - **Port**: `6869` (HTTPS, default)
-   - **Username**: Your OVMS account username
-   - **Password**: Your OVMS REST API password
-   - **Vehicle ID**: Your vehicle ID (e.g., DEMO)
-   - **Vehicle Password**: Password configured in your OVMS module (required for commands)
+Settings → Devices & Services → Add Integration → search for "OVMS", then
+enter your OVMS server credentials:
 
-### Options
+- **Server Host**: `api.openvehicles.com` (default)
+- **Port**: `6869` (HTTPS, default)
+- **Username**: Your OVMS account username
+- **Password**: Your OVMS REST API password
+- **Vehicle ID**: Your vehicle ID (e.g., DEMO)
+- **Vehicle Password**: Password configured in your OVMS module (required for commands)
 
-After setup, you can configure additional options:
+Add one entry per vehicle.
 
-- **Update Interval**: How often to fetch data (60-3600 seconds, default: 300)
+### Changing the configuration later
 
-### YAML Configuration
+- **Server host, port, username and passwords**: open the integration's
+  entry and choose **Reconfigure**. The new settings are checked with a
+  login before they are saved. The vehicle ID can't be changed; add another
+  vehicle as a new entry.
+- **Passwords**: when the OVMS server rejects the stored password, Home
+  Assistant asks for a new one (Settings → Devices & Services shows the
+  entry as needing attention).
+- **Update interval**: the entry's **Options** (60-3600 seconds,
+  default 300).
 
-For advanced users, YAML configuration is also supported:
+### Moving from YAML configuration
 
-```yaml
-ovms_hass:
-  host: api.openvehicles.com
-  port: 6869 # 6869 for HTTPS, 6868 for HTTP
-  username: your_ovms_username
-  password: your_ovms_rest_api_password
-  vehicles:
-    - vehicle_id: DEMO
-      name: My Tesla
-      vehicle_password: demo_module_password # Password configured in the OVMS module
-      scan_interval: 300 # seconds
-    - vehicle_id: TEST
-      name: Work Vehicle
-      vehicle_password: test_module_password # Different password per vehicle
-      scan_interval: 600
-```
+Configuring the integration with `ovms_hass:` in `configuration.yaml` is
+deprecated and will be removed in a future release of this integration.
 
-### UI Configuration
+If you still have an `ovms_hass:` block, Home Assistant imports each vehicle
+in it into a UI entry once and shows a repair notice, "The OVMS YAML
+configuration is being removed". After that first import the entry is what
+counts: changes made in YAML are ignored. To finish the move:
 
-Settings → Devices & Services → Add Integration → Search "OVMS"
+1. Check that the integration works from its UI entry (Settings → Devices &
+   Services → OVMS).
+2. Remove the `ovms_hass:` block from `configuration.yaml`, and any
+   `!secret` entries that only it used.
+3. Restart Home Assistant. The repair notice disappears.
+
+Entities, entity IDs and history stay as they are. Use **Reconfigure**,
+the reauth prompt and **Options** (above) for later changes.
 
 ## Services
 

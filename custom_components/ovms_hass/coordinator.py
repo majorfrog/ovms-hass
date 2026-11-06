@@ -23,13 +23,14 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
     OVMSApiClient,
     OVMSAPIError,
+    OVMSAuthenticationError,
     OVMSCommandNotSent,
     OVMSConnectionError,
     OVMSConnectionLost,
@@ -152,6 +153,9 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
             if isinstance(result, Exception)
         }
         if len(failed) == len(results):
+            if all(isinstance(err, OVMSAuthenticationError) for err in failed.values()):
+                # e.g. the password was changed on the server: HA starts reauth
+                raise ConfigEntryAuthFailed(f"OVMS login rejected: {failed['status']}")
             raise UpdateFailed(f"All OVMS requests failed: {failed['status']}")
 
         for name, result in results.items():
