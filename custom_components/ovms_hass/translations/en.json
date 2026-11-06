@@ -8,7 +8,7 @@
           "host": "Server Host",
           "port": "Server Port",
           "username": "Username",
-          "password": "Password",
+          "password": "Server Password",
           "vehicle_id": "Vehicle ID (optional)",
           "vehicle_password": "Vehicle Module Password (optional)"
         },
@@ -40,7 +40,7 @@
           "host": "Server Host",
           "port": "Server Port",
           "username": "Username",
-          "password": "Password",
+          "password": "Server Password",
           "vehicle_password": "Vehicle Module Password (optional)"
         },
         "data_description": {
@@ -56,9 +56,7 @@
       "vehicle_not_found": "This account doesn't have the vehicle. Use the account the vehicle belongs to, or add the other vehicle as a new entry."
     },
     "abort": {
-      "already_configured": "This OVMS vehicle is already configured.",
-      "reauth_successful": "The OVMS password was updated.",
-      "reconfigure_successful": "The OVMS connection was updated."
+      "already_configured": "This OVMS vehicle is already configured."
     }
   },
   "options": {

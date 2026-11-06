@@ -188,9 +188,11 @@ Configuring the integration with `ovms_hass:` in `configuration.yaml` is
 deprecated and will be removed in a future release of this integration.
 
 If you still have an `ovms_hass:` block, Home Assistant imports each vehicle
-in it into a UI entry once and shows a repair notice, "The OVMS YAML
-configuration is being removed". After that first import the entry is what
-counts: changes made in YAML are ignored. To finish the move:
+in it that doesn't have a UI entry yet, and shows a repair notice, "The OVMS
+YAML configuration is being removed". Once a vehicle has an entry, the entry
+is what counts: changes made in YAML are ignored. (If you delete the entry
+while the YAML is still there, it is imported again at the next start.) To
+finish the move:
 
 1. Check that the integration works from its UI entry (Settings → Devices &
    Services → OVMS).

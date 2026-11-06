@@ -309,7 +309,8 @@ class OVMSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
             ),
             description_placeholders={
-                "vehicle_id": entry.data.get(CONF_VEHICLE_ID, entry.unique_id or "")
+                # Entries made without a vehicle ID have no better name
+                "vehicle_id": entry.data.get(CONF_VEHICLE_ID) or entry.title
             },
             errors=errors,
         )

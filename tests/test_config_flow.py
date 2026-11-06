@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ovms_hass.api import (
     OVMSApiClient,
@@ -325,3 +326,38 @@ async def test_options_change_reloads_with_new_interval(hass: HomeAssistant) -> 
     assert entry.state is ConfigEntryState.LOADED
     coordinator = entry.runtime_data["coordinator"]
     assert coordinator.update_interval.total_seconds() == 120
+
+
+async def test_reconfigure_unexpected_error_shows_unknown(hass: HomeAssistant) -> None:
+    """An unexpected error during the login check shows "unknown"."""
+    entry, result = await _start_reconfigure(hass)
+    before = dict(entry.data)
+
+    with patch(
+        "custom_components.ovms_hass.config_flow.OVMSApiClient",
+        return_value=_flow_api(RuntimeError("boom")),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"host": "ovms.example", "port": 6869, "username": "user", "password": "x"},
+        )
+
+    assert result["errors"] == {"base": "unknown"}
+    assert dict(entry.data) == before
+
+
+async def test_reconfigure_entry_without_vehicle_id_names_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Old entries made without a vehicle ID show the entry title instead."""
+    entry = MockConfigEntry(
+        domain="ovms_hass",
+        title="OVMS (ovms.example)",
+        unique_id="ovms.example:user",
+        data={"host": "ovms.example", "port": 6869, "username": "user", "password": "pw"},
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+
+    assert result["description_placeholders"]["vehicle_id"] == "OVMS (ovms.example)"

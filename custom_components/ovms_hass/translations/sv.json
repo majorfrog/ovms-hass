@@ -8,7 +8,7 @@
           "host": "Servervärd",
           "port": "Serverport",
           "username": "Användarnamn",
-          "password": "Lösenord",
+          "password": "Serverlösenord",
           "vehicle_id": "Fordons-ID (valfritt)",
           "vehicle_password": "Fordonsmodullösenord (valfritt)"
         },
@@ -20,13 +20,40 @@
           "vehicle_id": "Fordons-ID att övervaka (lämna tomt för automatisk identifiering)",
           "vehicle_password": "Lösenordet som konfigurerats i din OVMS-modul (för fordonskommandon). Om det inte anges kommer serverlösenordet att användas."
         }
+      },
+      "reauth_confirm": {
+        "title": "Ange OVMS-lösenordet igen",
+        "description": "OVMS-servern {host} godtog inte lösenordet för {username}. Ange det nuvarande serverlösenordet. Ange även fordonsmodulens lösenord om det också har ändrats.",
+        "data": {
+          "password": "Serverlösenord",
+          "vehicle_password": "Fordonsmodullösenord (valfritt)"
+        },
+        "data_description": {
+          "password": "Ditt OVMS-serverlösenord (för REST API)",
+          "vehicle_password": "Lämna tomt för att behålla det sparade."
+        }
+      },
+      "reconfigure": {
+        "title": "Ändra OVMS-anslutning",
+        "description": "Ändra anslutningen till OVMS-servern för fordonet {vehicle_id}. De nya inställningarna kontrolleras med en inloggning innan de sparas. Fordonet kan inte ändras här; lägg till ett annat fordon som en ny post.",
+        "data": {
+          "host": "Servervärd",
+          "port": "Serverport",
+          "username": "Användarnamn",
+          "password": "Serverlösenord",
+          "vehicle_password": "Fordonsmodullösenord (valfritt)"
+        },
+        "data_description": {
+          "vehicle_password": "Lämna tomt för att behålla det sparade."
+        }
       }
     },
     "error": {
       "cannot_connect": "Kunde inte ansluta till OVMS-servern. Kontrollera värd- och portinställningarna.",
       "invalid_auth": "Ogiltigt användarnamn eller lösenord. Kontrollera dina uppgifter.",
       "missing_credentials": "Ange alla obligatoriska uppgifter.",
-      "unknown": "Ett oväntat fel inträffade. Kontrollera loggarna för mer information."
+      "unknown": "Ett oväntat fel inträffade. Kontrollera loggarna för mer information.",
+      "vehicle_not_found": "Kontot har inte det här fordonet. Använd kontot som fordonet tillhör, eller lägg till det andra fordonet som en ny post."
     },
     "abort": {
       "already_configured": "Detta OVMS-fordon är redan konfigurerat."
@@ -253,9 +280,6 @@
       },
       "charge_current": {
         "name": "Laddningsström"
-      },
-      "gps_streaming_interval": {
-        "name": "GPS-strömningsintervall"
       }
     },
     "button": {

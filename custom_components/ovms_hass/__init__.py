@@ -164,7 +164,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     Raises:
         ConfigEntryNotReady: If the server can't be reached (HA retries)
-        ConfigEntryError: If the server rejects the credentials
+        ConfigEntryAuthFailed: If the server rejects the credentials (HA
+            then starts the reauth flow)
     """
     host = entry.data.get(CONF_HOST, DEFAULT_HOST)
     # Create API client (always create new instance per entry)
