@@ -8,7 +8,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import OVMSDataCoordinator
 from .entities import (
-    ChargeLimitNumber,
     ChargingCurrentNumber,
 )
 
@@ -24,7 +23,6 @@ async def async_setup_entry(
     coordinator: OVMSDataCoordinator = config_entry.runtime_data["coordinator"]
 
     entities = [
-        ChargeLimitNumber(coordinator, coordinator.vehicle_id),
         ChargingCurrentNumber(coordinator, coordinator.vehicle_id),
     ]
 

@@ -215,6 +215,9 @@
       },
       "connection_status": {
         "name": "Anslutningsstatus"
+      },
+      "charge_limit_soc": {
+        "name": "Laddningsgräns SOC"
       }
     },
     "binary_sensor": {
@@ -275,9 +278,6 @@
       }
     },
     "number": {
-      "charge_limit": {
-        "name": "Laddningsgräns"
-      },
       "charge_current": {
         "name": "Laddningsström"
       }

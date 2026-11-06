@@ -19,6 +19,7 @@ from .entities import (
     CACSensor,
     ChargeKwhSensor,
     ChargeLimitRangeSensor,
+    ChargeLimitSOCSensor,
     ChargerEfficiencySensor,
     ChargerPowerInputSensor,
     ChargerTemperatureSensor,
@@ -135,6 +136,7 @@ async def async_setup_entry(
 
         # Charging (technical)
         ChargeLimitRangeSensor(coordinator, coordinator.vehicle_id),
+        ChargeLimitSOCSensor(coordinator, coordinator.vehicle_id),
         GridKwhSensor(coordinator, coordinator.vehicle_id),
         TotalGridKwhSensor(coordinator, coordinator.vehicle_id),
         ChargerEfficiencySensor(coordinator, coordinator.vehicle_id),

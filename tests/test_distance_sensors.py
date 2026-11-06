@@ -1,4 +1,4 @@
-"""Tests for the odometer and trip meter sensors (OVMS sends 1/10 units)."""
+"""Tests for distance and charge-limit entities (values as OVMS reports them)."""
 
 from __future__ import annotations
 
@@ -53,3 +53,33 @@ async def test_distance_missing_or_invalid_is_unknown(hass: HomeAssistant, raw) 
 
     assert OdometerSensor(coord, "APA123").native_value is None
     assert TripMeterSensor(coord, "APA123").native_value is None
+
+
+async def test_charge_current_number_shows_the_limit_not_the_measured_current(
+    hass: HomeAssistant,
+) -> None:
+    """The number sets the charge current limit (command 15), so it must show
+    the configured limit (S field 8, REST "chargelimit"), not the current
+    flowing right now (REST "chargecurrent")."""
+    from custom_components.ovms_hass.entities import ChargingCurrentNumber
+
+    coord = _coordinator(hass, {})
+    coord.data["charge"] = {"chargelimit": 16, "chargecurrent": -9.5}
+
+    assert ChargingCurrentNumber(coord, "APA123").native_value == 16
+
+
+async def test_charge_limit_soc_sensor_shows_configured_soc_limit(
+    hass: HomeAssistant,
+) -> None:
+    """The SOC limit is read-only: S field 22, REST "charge_limit_soc"."""
+    from homeassistant.const import PERCENTAGE
+
+    from custom_components.ovms_hass.entities import ChargeLimitSOCSensor
+
+    coord = _coordinator(hass, {})
+    coord.data["charge"] = {"charge_limit_soc": 80, "chargelimit": 16}
+    sensor = ChargeLimitSOCSensor(coord, "APA123")
+
+    assert sensor.native_value == 80
+    assert sensor.native_unit_of_measurement == PERCENTAGE

@@ -949,45 +949,6 @@ class ValetModeSwitch(OVMSEntity, SwitchEntity):
         await self.coordinator.async_send_command("23", "valet mode off")
 
 
-class ChargeLimitNumber(OVMSEntity, NumberEntity):
-    """Number entity for setting charge limit SOC."""
-
-    _attr_native_min_value = 50
-    _attr_native_max_value = 100
-    _attr_native_step = 1
-    _attr_native_unit_of_measurement = PERCENTAGE
-
-    def __init__(self, coordinator: Any, vehicle_id: str) -> None:
-        """Initialize charge limit number entity.
-
-        Args:
-            coordinator: Data coordinator
-            vehicle_id: OVMS vehicle ID
-        """
-        config = EntityConfig(
-            unique_id="charge_limit",
-            name="Charge Limit",
-            icon="mdi:battery-charging-100",
-        )
-        super().__init__(coordinator, config, vehicle_id)
-
-    @property
-    def native_value(self) -> int | None:
-        """Return current charge limit."""
-        return self.coordinator.data.get("charge", {}).get("chargelimit")
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Set charge limit SOC.
-
-        Args:
-            value: Target SOC percentage
-        """
-        soc_int = int(value)
-        await self.coordinator.async_send_command(
-            f"16,{soc_int}", f"charge limit {soc_int}%"
-        )
-
-
 class ChargingCurrentNumber(OVMSEntity, NumberEntity):
     """Number entity for setting charging current."""
 
@@ -1012,8 +973,13 @@ class ChargingCurrentNumber(OVMSEntity, NumberEntity):
 
     @property
     def native_value(self) -> int | None:
-        """Return current charging current setting."""
-        return self.coordinator.data.get("charge", {}).get("chargecurrent")
+        """Return the charge current limit (Protocol v2 S field 8).
+
+        "chargelimit" is the configured limit in amps that command 15 sets;
+        "chargecurrent" is the current flowing now (the Charging Current
+        sensor).
+        """
+        return self.coordinator.data.get("charge", {}).get("chargelimit")
 
     async def async_set_native_value(self, value: float) -> None:
         """Set charging current.
@@ -1766,6 +1732,32 @@ class ChargeLimitRangeSensor(OVMSEntity, SensorEntity):
     def native_value(self) -> int | None:
         """Return charge limit range in km."""
         return self.coordinator.data.get("charge", {}).get("charge_limit_range")
+
+
+class ChargeLimitSOCSensor(OVMSEntity, SensorEntity):
+    """Configured SOC at which charging stops (read-only).
+
+    Protocol v2 has no command that sets a SOC limit; on a Nissan Leaf it is
+    module feature 10 (see the README, set_feature).
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_entity_registry_enabled_default = False  # Disabled by default
+
+    def __init__(self, coordinator: Any, vehicle_id: str) -> None:
+        """Initialize charge limit SOC sensor."""
+        config = EntityConfig(
+            unique_id="charge_limit_soc",
+            name="Charge Limit SOC",
+            icon="mdi:battery-charging-80",
+        )
+        super().__init__(coordinator, config, vehicle_id)
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the SOC limit in % (Protocol v2 S field 22)."""
+        return self.coordinator.data.get("charge", {}).get("charge_limit_soc")
 
 
 class GridKwhSensor(OVMSEntity, SensorEntity):

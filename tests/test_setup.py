@@ -200,23 +200,27 @@ async def test_services_registered_by_async_setup(hass: HomeAssistant) -> None:
     assert "get_parameter" not in services
 
 
-async def test_setup_removes_stale_gps_interval_entity(hass: HomeAssistant) -> None:
-    """The removed GPS interval number must not linger as 'not provided'."""
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "gps_streaming_interval",  # feature list was never read
+        "charge_limit",  # sent command 16 (charge mode + current) with a SOC
+    ],
+)
+async def test_setup_removes_stale_number_entities(
+    hass: HomeAssistant, suffix: str
+) -> None:
+    """Removed number entities must not linger as 'not provided'."""
     entry = _entry(hass)
     registry = er.async_get(hass)
     registry.async_get_or_create(
-        "number",
-        "ovms_hass",
-        "ovms_APA123_gps_streaming_interval",
-        config_entry=entry,
+        "number", "ovms_hass", f"ovms_APA123_{suffix}", config_entry=entry
     )
 
     await _setup(hass, entry, *_working_clients())
 
     assert entry.state is ConfigEntryState.LOADED
     assert (
-        registry.async_get_entity_id(
-            "number", "ovms_hass", "ovms_APA123_gps_streaming_interval"
-        )
+        registry.async_get_entity_id("number", "ovms_hass", f"ovms_APA123_{suffix}")
         is None
     )

@@ -26,7 +26,7 @@ This integration provides seamless Home Assistant support for OVMS-equipped vehi
 ### Vehicle Control
 
 - **AC On** - Turn on AC via button (use `send_command` service to turn off)
-- **Charging** - Start/stop charging, set charge limits and current
+- **Charging** - Set the charge current limit; read the charge limits
 - **Door Locks** - Lock/unlock vehicle doors (Lock entity)
 - **Cooldown** - Activate battery/cabin cooling (Switch entity)
 - **Vehicle Wake** - Wake vehicle from sleep mode
@@ -42,7 +42,7 @@ This integration provides seamless Home Assistant support for OVMS-equipped vehi
 | `lock`           | 1     | Door Locks (lock/unlock)                                                                                        |
 | `device_tracker` | 1     | GPS Location with accuracy (SOC has its own sensor)                                                             |
 | `switch`         | 2     | Cooldown, Valet Mode                                                                                            |
-| `number`         | 2     | Charge Limit (50-100%), Charge Current                                                                          |
+| `number`         | 1     | Charge Current (limit, A)                                                                                       |
 | `binary_sensor`  | 14    | Doors, Bonnet, Trunk, Charge Port, Parking Brake, Pilot Present, Car On, Headlights, Alarm, GPS Lock, CAN Write |
 | `sensor`         | 50+   | Battery, Charging, Temperature, Power, Location, Diagnostics                                                    |
 | `button`         | 8     | Refresh, Wake Up, AC On, HomeLink 1-3, Module Reset, TPMS Reset                                                 |
@@ -84,7 +84,7 @@ This integration provides seamless Home Assistant support for OVMS-equipped vehi
 - Charging State, Power, Current
 - Charger Power Input, Charge Type
 - Time to Full, Charge Session Energy (kWh)
-- Charge Limit Range - disabled
+- Charge Limit SOC, Charge Limit Range - disabled
 - Grid kWh (session & total) - disabled (technical)
 - Charger Efficiency - disabled (technical)
 
@@ -437,20 +437,27 @@ automation:
         entity_id: lock.my_tesla_door_lock
 ```
 
-### Charging: Set Optimal Charge Limit
+### Charging: Set a Charge Limit (Nissan Leaf)
+
+Protocol v2 has no command that sets a SOC limit, so the integration shows
+the configured limit read-only (the "Charge Limit SOC" sensor). On a Nissan
+Leaf, the module's "Charge to Limit" feature uses feature 10 for the SOC and
+feature 11 for the range, which `set_feature` can write. Other vehicles use
+these features differently or not at all; check your vehicle's OVMS docs
+first.
 
 ```yaml
 automation:
   - trigger:
       platform: state
-      entity_id: sensor.my_tesla_charging_state
+      entity_id: sensor.my_leaf_charging_state
       to: "charging"
     action:
-      service: number.set_value
-      target:
-        entity_id: number.my_tesla_charge_limit
+      service: ovms_hass.set_feature
       data:
-        value: 80
+        vehicle_id: "DEMO"
+        feature_number: 10 # Leaf: charge to SOC limit
+        value: "80"
 ```
 
 ### Security: Alert on Door Open While Away
@@ -718,7 +725,7 @@ Not all vehicles support all commands:
 - **AC/Climate Control** (Command 26): Not all vehicles support HVAC state reporting. The AC On button sends the command but the HVAC state may not be available on all cars. Use `ovms_hass.send_command` with command `26,0` to turn AC off. Seres (SQ) uses Command 24
 - **Cooldown** (Command 25): Support varies by vehicle model
 - **Wake-up** (Command 18): May not work on all vehicle types
-- **Charge Limits**: Some vehicles don't support setting charge limits via OVMS
+- **Charge Limits**: Protocol v2 has no SOC-limit command; the SOC limit is shown read-only. Vehicle-specific features may set it (e.g. Nissan Leaf feature 10, see the charge-limit example above)
 
 ### Device Information
 

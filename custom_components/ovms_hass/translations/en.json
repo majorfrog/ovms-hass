@@ -215,6 +215,9 @@
       },
       "connection_status": {
         "name": "Connection Status"
+      },
+      "charge_limit_soc": {
+        "name": "Charge Limit SOC"
       }
     },
     "binary_sensor": {
@@ -275,9 +278,6 @@
       }
     },
     "number": {
-      "charge_limit": {
-        "name": "Charge Limit"
-      },
       "charge_current": {
         "name": "Charge Current"
       }

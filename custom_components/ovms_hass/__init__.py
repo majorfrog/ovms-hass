@@ -255,6 +255,9 @@ REMOVED_ENTITIES = (
     # The module's feature list was never read, so it was always unknown.
     # GPS streaming can be read and set with send_command instead (README).
     ("number", "gps_streaming_interval"),
+    # Sent command 16 (charge mode + current) with a SOC; Protocol v2 has no
+    # SOC-limit command. Replaced by the read-only charge_limit_soc sensor.
+    ("number", "charge_limit"),
 )
 
 
