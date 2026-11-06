@@ -188,6 +188,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         api_client,
         vehicle_id,
         scan_interval=scan_interval,
+        config_entry=entry,
     )
 
     # Store coordinator in entry runtime data

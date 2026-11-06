@@ -21,6 +21,7 @@ from datetime import timedelta
 from collections.abc import Callable
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
@@ -80,6 +81,7 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
         api_client: OVMSApiClient,
         vehicle_id: str,
         scan_interval: int = DEFAULT_SCAN_INTERVAL,
+        config_entry: ConfigEntry | None = None,
     ) -> None:
         """Initialize coordinator.
 
@@ -88,11 +90,14 @@ class OVMSDataCoordinator(DataUpdateCoordinator):
             api_client: OVMS REST API client
             vehicle_id: OVMS vehicle ID
             scan_interval: Update interval in seconds
+            config_entry: The entry this coordinator belongs to. HA wants it
+                passed explicitly instead of read from the setup context.
         """
         super().__init__(
             hass,
             _LOGGER,
             name=f"OVMS {vehicle_id}",
+            config_entry=config_entry,
             update_interval=timedelta(seconds=scan_interval),
         )
         self.api_client = api_client

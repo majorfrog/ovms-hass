@@ -18,7 +18,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.components.button import ButtonEntity
-from homeassistant.components.device_tracker.config_entry import TrackerEntity
+from homeassistant.components.device_tracker import TrackerEntity
 from homeassistant.components.device_tracker.const import SourceType
 from homeassistant.components.lock import LockEntity
 from homeassistant.components.number import NumberEntity
@@ -1203,11 +1203,6 @@ class VehicleTracker(OVMSEntity, TrackerEntity):
     def source_type(self) -> SourceType:
         """Return the source type of the device."""
         return SourceType.GPS
-
-    @property
-    def battery_level(self) -> int | None:
-        """Return the battery level of the device."""
-        return self.coordinator.data.get("status", {}).get("soc")
 
     @property
     def location_accuracy(self) -> int:

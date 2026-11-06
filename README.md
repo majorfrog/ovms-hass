@@ -40,7 +40,7 @@ This integration provides seamless Home Assistant support for OVMS-equipped vehi
 | Entity Type      | Count | Examples                                                                                                        |
 | ---------------- | ----- | --------------------------------------------------------------------------------------------------------------- |
 | `lock`           | 1     | Door Locks (lock/unlock)                                                                                        |
-| `device_tracker` | 1     | GPS Location with battery & accuracy                                                                            |
+| `device_tracker` | 1     | GPS Location with accuracy (SOC has its own sensor)                                                             |
 | `switch`         | 2     | Cooldown, Valet Mode                                                                                            |
 | `number`         | 3     | Charge Limit (50-100%), Charge Current, GPS Interval                                                            |
 | `binary_sensor`  | 14    | Doors, Bonnet, Trunk, Charge Port, Parking Brake, Pilot Present, Car On, Headlights, Alarm, GPS Lock, CAN Write |
